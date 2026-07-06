@@ -118,6 +118,42 @@ setInterval(expireDueSessions, 1000);
 setInterval(markOfflineComputers, 5000);
 
 app.get('/health', async () => ({ ok: true, service: 'perpus-billing-backend', at: nowIso() }));
+app.get('/api/settings', async () => {
+  const rows = db.prepare('SELECT key, value, updated_at FROM settings ORDER BY key').all();
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+});
+app.patch('/api/settings', async (req, reply) => {
+  const editable = new Set([
+    'business_name',
+    'default_expire_action',
+    'heartbeat_interval_seconds',
+    'client_offline_threshold_seconds',
+    'shutdown_warning_seconds'
+  ]);
+  const numericKeys = new Set(['heartbeat_interval_seconds', 'client_offline_threshold_seconds', 'shutdown_warning_seconds']);
+  const entries = Object.entries(req.body ?? {}).filter(([key]) => editable.has(key));
+  if (!entries.length) return reply.code(400).send({ error: 'Tidak ada setting valid untuk disimpan' });
+  const upsert = db.prepare(`
+    INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `);
+  db.transaction((rows) => {
+    for (const [key, rawValue] of rows) {
+      let value = String(rawValue ?? '').trim();
+      if (!value) throw new Error(`${key} wajib diisi`);
+      if (numericKeys.has(key)) {
+        const number = Number(value);
+        if (!Number.isFinite(number) || number <= 0) throw new Error(`${key} harus angka lebih dari 0`);
+        value = String(Math.floor(number));
+      }
+      if (key === 'default_expire_action' && !['shutdown', 'lock', 'restart'].includes(value)) throw new Error('default_expire_action harus shutdown, lock, atau restart');
+      upsert.run(key, value);
+    }
+  })(entries);
+  broadcast('settings.updated', Object.fromEntries(entries));
+  const rows = db.prepare('SELECT key, value FROM settings ORDER BY key').all();
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+});
 
 app.post('/api/auth/login', async (req, reply) => {
   const missing = required(req.body, ['username', 'password']);

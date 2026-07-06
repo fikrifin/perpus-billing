@@ -34,6 +34,10 @@ try {
   await wait(800);
   await request('/health');
   await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'admin' }) });
+  const settings = await request('/api/settings');
+  if (settings.default_expire_action !== 'shutdown') throw new Error('Default settings missing');
+  const updatedSettings = await request('/api/settings', { method: 'PATCH', body: JSON.stringify({ business_name: 'Smoke Library', heartbeat_interval_seconds: 7, client_offline_threshold_seconds: 35, shutdown_warning_seconds: 45, default_expire_action: 'shutdown' }) });
+  if (updatedSettings.business_name !== 'Smoke Library' || updatedSettings.heartbeat_interval_seconds !== '7') throw new Error('Settings update failed');
   const computer = await request('/api/computers', { method: 'POST', body: JSON.stringify({ code: `PC-SMOKE-${Date.now()}`, name: 'PC Smoke Test' }) });
   const command = await request(`/api/computers/${computer.code}/command`, { method: 'POST', body: JSON.stringify({ command: 'lock', note: 'Smoke command' }) });
   let commandHeartbeat = await request(`/api/computers/${computer.code}/heartbeat`, { method: 'POST', body: JSON.stringify({ clientVersion: 'smoke' }) });

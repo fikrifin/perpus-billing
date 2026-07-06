@@ -29,6 +29,8 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [serverOk, setServerOk] = useState(false);
   const [selectedComputer, setSelectedComputer] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [settings, setSettings] = useState({});
 
   const activeUsers = users.filter((user) => user.status === 'active' && Number(user.default_duration_minutes ?? 0) > 0);
   const availableComputers = computers.filter((pc) => !pc.active_session_id && pc.status !== 'in_use');
@@ -41,17 +43,25 @@ function App() {
   const sessionForm = useForm({ username: '', computer_code: '', duration_minutes: '60' });
   const extendForm = useForm({ session_id: '', minutes: '30' });
   const topupForm = useForm({ username: '', minutes: '60' });
+  const settingsForm = useForm({
+    business_name: 'Perpustakaan Daerah',
+    default_expire_action: 'shutdown',
+    heartbeat_interval_seconds: '5',
+    client_offline_threshold_seconds: '30',
+    shutdown_warning_seconds: '60'
+  });
 
   async function loadAll() {
     try {
-      const [health, computerRows, userRows, packageRows, activeRows, daily, logRows] = await Promise.all([
+      const [health, computerRows, userRows, packageRows, activeRows, daily, logRows, settingRows] = await Promise.all([
         getJson('/health'),
         getJson('/api/computers'),
         getJson('/api/users'),
         getJson('/api/access-duration-packages'),
         getJson('/api/sessions/active'),
         getJson('/api/reports/daily'),
-        getJson('/api/reports/usage-logs')
+        getJson('/api/reports/usage-logs'),
+        getJson('/api/settings')
       ]);
       setServerOk(Boolean(health.ok));
       setComputers(computerRows);
@@ -60,6 +70,8 @@ function App() {
       setSessions(activeRows);
       setReport(daily);
       setLogs(logRows);
+      setSettings(settingRows);
+      settingsForm.setValues((prev) => ({ ...prev, ...settingRows }));
     } catch (err) {
       setServerOk(false);
       setError(err.message);
@@ -111,6 +123,18 @@ function App() {
     await postJson('/api/computers', computerForm.values);
     computerForm.reset();
     setNotice('Komputer berhasil ditambahkan');
+  }
+
+  async function saveSettings() {
+    const saved = await patchJson('/api/settings', settingsForm.values);
+    setSettings(saved);
+    settingsForm.setValues((prev) => ({ ...prev, ...saved }));
+    setNotice('Pengaturan berhasil disimpan');
+  }
+
+  function resetSettingsForm() {
+    settingsForm.setValues((prev) => ({ ...prev, ...settings }));
+    setNotice('Form pengaturan dikembalikan ke data server');
   }
 
   async function createUser() {
@@ -272,108 +296,154 @@ function App() {
         <Card title="Durasi Hari Ini" value={`${stats.durationToday} menit`} />
       </section>
 
-      <section className="layout">
-        <Panel title="Login Operator" subtitle={operator ? `Aktif: ${operator.name} (${operator.role})` : 'Development default: admin/admin'}>
-          <div className="form two">
-            <input placeholder="Username" {...loginForm.bind('username')} />
-            <input placeholder="Password" type="password" {...loginForm.bind('password')} />
-            <button onClick={() => submit(login)}>Login</button>
-          </div>
-        </Panel>
-        <Panel title="Tambah Komputer">
-          <div className="form two">
-            <input placeholder="Kode, contoh PC-01" {...computerForm.bind('code')} />
-            <input placeholder="Nama komputer" {...computerForm.bind('name')} />
-            <input placeholder="IP address optional" {...computerForm.bind('ip_address')} />
-            <button onClick={() => submit(createComputer)}>Tambah PC</button>
-          </div>
-        </Panel>
-      </section>
+      <nav className="tabs" aria-label="Navigasi dashboard">
+        {[
+          ['dashboard', 'Dashboard'],
+          ['sessions', 'Session'],
+          ['users', 'User'],
+          ['computers', 'Komputer'],
+          ['settings', 'Pengaturan'],
+          ['reports', 'Laporan']
+        ].map(([key, label]) => (
+          <button key={key} className={activeTab === key ? 'active' : ''} onClick={() => setActiveTab(key)}>{label}</button>
+        ))}
+      </nav>
 
-      <section className="layout">
-        <Panel title="Buat User / Member">
-          <div className="form two">
-            <input placeholder="Username" {...userForm.bind('username')} />
-            <input placeholder="Password" {...userForm.bind('password')} />
-            <select {...userForm.bind('user_type')}><option value="member">Member</option><option value="one_time">One-time</option></select>
-            <input placeholder="Nama lengkap" {...userForm.bind('full_name')} />
-            <input placeholder="Nomor anggota optional" {...userForm.bind('member_number')} />
-            <input placeholder="Saldo waktu awal menit" type="number" {...userForm.bind('default_duration_minutes')} />
-            <button onClick={() => submit(createUser)}>Buat User</button>
-          </div>
-        </Panel>
-        <Panel title="Mulai Session" subtitle="Pilih user aktif + komputer, lalu mulai session.">
-          <div className="form two">
-            <select {...sessionForm.bind('username')}>
-              <option value="">Pilih user aktif</option>
-              {activeUsers.map((user) => <option key={user.id} value={user.username}>{user.username} · saldo {user.default_duration_minutes} menit</option>)}
-            </select>
-            <select {...sessionForm.bind('computer_code')}>
-              <option value="">Pilih komputer</option>
-              {availableComputers.map((pc) => <option key={pc.id} value={pc.code}>{pc.code} · {pc.status}</option>)}
-            </select>
-            <input placeholder="Durasi menit" type="number" min="1" {...sessionForm.bind('duration_minutes')} />
-            <button onClick={() => submit(startSession)}>Start Session</button>
-          </div>
-          <p className="hint">Kalau user tidak muncul, berarti statusnya belum active atau saldo waktunya 0. Klik Top Up di tabel User.</p>
-        </Panel>
-      </section>
-
-      <section className="layout">
-        <Panel title="Komputer" wide>
-          {selectedComputer && (
-            <div className="setup-box">
-              <div>
-                <strong>{selectedComputer.action === 'setup' ? 'Setup Client' : selectedComputer.action === 'session' ? 'Siap Mulai Session' : 'Status Komputer'}</strong>
-                <p>{selectedComputer.name} · <b>{selectedComputer.code}</b> · status: <b>{selectedComputer.status}</b></p>
-              </div>
-              <div className="setup-values">
-                <span>Server: <code>{API_BASE}</code></span>
-                <span>Kode PC: <code>{selectedComputer.code}</code></span>
-              </div>
+      {activeTab === 'dashboard' && (
+        <section className="layout">
+          <Panel title="Login Operator" subtitle={operator ? `Aktif: ${operator.name} (${operator.role})` : 'Development default: admin/admin'}>
+            <div className="form two">
+              <input placeholder="Username" {...loginForm.bind('username')} />
+              <input placeholder="Password" type="password" {...loginForm.bind('password')} />
+              <button onClick={() => submit(login)}>Login</button>
             </div>
-          )}
-          <Table headers={['Kode', 'Nama', 'IP', 'Status', 'Heartbeat', 'Aksi']} rows={computers.map((pc) => [pc.code, pc.name, pc.ip_address ?? '-', <StatusPill status={pc.status} />, pc.last_heartbeat_at ?? '-', <div className="actions"><button type="button" className="secondary" onClick={() => prepareComputer(pc)}>Setup</button><button type="button" className="secondary" onClick={() => prepareComputerForSession(pc)}>Pakai</button><button type="button" className="secondary" onClick={() => submit(() => sendComputerCommand(pc, 'lock'))}>Lock</button><button type="button" className="secondary" onClick={() => submit(() => sendComputerCommand(pc, 'restart'))}>Restart</button><button type="button" className="danger" onClick={() => submit(() => sendComputerCommand(pc, 'shutdown'))}>Shutdown</button><button type="button" className="danger" onClick={() => submit(() => markComputerOffline(pc))}>Offline</button><button type="button" className="danger" onClick={() => submit(() => deleteComputer(pc))}>Hapus</button></div>])} />
-        </Panel>
-        <Panel title="Session Aktif" wide>
-          <div className="form inline">
-            <input placeholder="Session ID" {...extendForm.bind('session_id')} />
-            <input placeholder="Menit" type="number" {...extendForm.bind('minutes')} />
-            <button onClick={() => submit(extendSession)}>Extend</button>
-          </div>
-          <Table headers={['ID', 'User', 'PC', 'Sisa', 'Mulai', 'Selesai', 'Aksi']} rows={sessions.map((s) => [s.id, s.username, s.computer_code, formatRemaining(s.end_time), formatTime(s.start_time), formatTime(s.end_time), <div className="actions"><button onClick={() => extendForm.setValues({ session_id: String(s.id), minutes: '30' })}>+30</button><button className="danger" onClick={() => submit(() => stopSession(s.id))}>Stop</button></div>])} />
-        </Panel>
-      </section>
+          </Panel>
+          <Panel title="Ringkasan Hari Ini" subtitle={`${report?.total_sessions ?? 0} session · ${stats.durationToday} menit penggunaan`}>
+            <ul className="summary-list">
+              <li><strong>{stats.totalComputers}</strong><span>Total komputer terdaftar</span></li>
+              <li><strong>{stats.online}</strong><span>Komputer online/idle</span></li>
+              <li><strong>{stats.active}</strong><span>Session sedang aktif</span></li>
+              <li><strong>{settings.business_name ?? 'Perpustakaan Daerah'}</strong><span>Nama instansi</span></li>
+            </ul>
+          </Panel>
+        </section>
+      )}
 
-      <section className="layout">
-        <Panel title="User" wide>
-          <div className="form inline">
-            <input placeholder="Username, contoh user001" {...topupForm.bind('username')} />
-            <input placeholder="Menit" type="number" min="1" {...topupForm.bind('minutes')} />
-            <button onClick={() => submit(topupUser)}>Isi Ulang Waktu</button>
-          </div>
-          <div className="form inline">
-            <input placeholder="Username reset password" {...passwordForm.bind('username')} />
-            <input placeholder="Password baru" {...passwordForm.bind('password')} />
-            <button onClick={() => submit(resetUserPassword)}>Reset Password</button>
-          </div>
-          <Table headers={['Username', 'Nama', 'Tipe', 'Status', 'Saldo Waktu', 'Aksi']} rows={users.slice(0, 12).map((u) => [u.username, u.full_name ?? '-', u.user_type, <StatusPill status={u.status} />, `${u.default_duration_minutes ?? 0} menit`, <div className="actions"><button onClick={() => prepareTopup(u)}>Top Up</button><button className="secondary" onClick={() => prepareSession(u)}>{u.status === 'active' && Number(u.default_duration_minutes ?? 0) > 0 ? 'Pakai' : 'Pakai?'}</button><button className="danger" onClick={() => submit(() => disableUser(u))}>Disable</button></div>])} />
-        </Panel>
-        <Panel title="Paket Durasi">
-          <div className="form inline package-form">
-            <input placeholder="Nama paket" {...packageForm.bind('name')} />
-            <input placeholder="Menit" type="number" min="1" {...packageForm.bind('duration_minutes')} />
-            <button onClick={() => submit(createPackage)}>Tambah Paket</button>
-          </div>
-          <ul className="package-list">{packages.map((p) => <li key={p.id}><strong>{p.name}</strong><span>{p.duration_minutes} menit</span><button className="danger compact" onClick={() => submit(() => deletePackage(p.id))}>Hapus</button></li>)}</ul>
-        </Panel>
-      </section>
+      {activeTab === 'sessions' && (
+        <section className="layout">
+          <Panel title="Mulai Session" subtitle="Pilih user aktif + komputer, lalu mulai session." wide>
+            <div className="form two">
+              <select {...sessionForm.bind('username')}>
+                <option value="">Pilih user aktif</option>
+                {activeUsers.map((user) => <option key={user.id} value={user.username}>{user.username} · saldo {user.default_duration_minutes} menit</option>)}
+              </select>
+              <select {...sessionForm.bind('computer_code')}>
+                <option value="">Pilih komputer</option>
+                {availableComputers.map((pc) => <option key={pc.id} value={pc.code}>{pc.code} · {pc.status}</option>)}
+              </select>
+              <input placeholder="Durasi menit" type="number" min="1" {...sessionForm.bind('duration_minutes')} />
+              <button onClick={() => submit(startSession)}>Start Session</button>
+            </div>
+            <p className="hint">Kalau user tidak muncul, berarti statusnya belum active atau saldo waktunya 0. Klik Top Up di tab User.</p>
+          </Panel>
+          <Panel title="Session Aktif" wide>
+            <div className="form inline">
+              <input placeholder="Session ID" {...extendForm.bind('session_id')} />
+              <input placeholder="Menit" type="number" {...extendForm.bind('minutes')} />
+              <button onClick={() => submit(extendSession)}>Extend</button>
+            </div>
+            <Table headers={['ID', 'User', 'PC', 'Sisa', 'Mulai', 'Selesai', 'Aksi']} rows={sessions.map((s) => [s.id, s.username, s.computer_code, formatRemaining(s.end_time), formatTime(s.start_time), formatTime(s.end_time), <div className="actions"><button onClick={() => extendForm.setValues({ session_id: String(s.id), minutes: '30' })}>+30</button><button className="danger" onClick={() => submit(() => stopSession(s.id))}>Stop</button></div>])} />
+          </Panel>
+        </section>
+      )}
 
-      <section className="layout single">
-        <Panel title="Riwayat Aktivitas" wide>
-          <Table headers={['Waktu', 'User', 'PC', 'Aksi', 'Catatan']} rows={logs.slice(0, 12).map((log) => [formatTime(log.created_at), log.username ?? '-', log.computer_code ?? '-', humanAction(log.action), log.note ?? '-'])} />
-        </Panel>
-      </section>
+      {activeTab === 'users' && (
+        <section className="layout">
+          <Panel title="Buat User / Member" wide>
+            <div className="form two">
+              <input placeholder="Username" {...userForm.bind('username')} />
+              <input placeholder="Password" {...userForm.bind('password')} />
+              <select {...userForm.bind('user_type')}><option value="member">Member</option><option value="one_time">One-time</option></select>
+              <input placeholder="Nama lengkap" {...userForm.bind('full_name')} />
+              <input placeholder="Nomor anggota optional" {...userForm.bind('member_number')} />
+              <input placeholder="Saldo waktu awal menit" type="number" {...userForm.bind('default_duration_minutes')} />
+              <button onClick={() => submit(createUser)}>Buat User</button>
+            </div>
+          </Panel>
+          <Panel title="User" wide>
+            <div className="form inline">
+              <input placeholder="Username, contoh user001" {...topupForm.bind('username')} />
+              <input placeholder="Menit" type="number" min="1" {...topupForm.bind('minutes')} />
+              <button onClick={() => submit(topupUser)}>Isi Ulang Waktu</button>
+            </div>
+            <div className="form inline">
+              <input placeholder="Username reset password" {...passwordForm.bind('username')} />
+              <input placeholder="Password baru" {...passwordForm.bind('password')} />
+              <button onClick={() => submit(resetUserPassword)}>Reset Password</button>
+            </div>
+            <Table headers={['Username', 'Nama', 'Tipe', 'Status', 'Saldo Waktu', 'Aksi']} rows={users.slice(0, 20).map((u) => [u.username, u.full_name ?? '-', u.user_type, <StatusPill status={u.status} />, `${u.default_duration_minutes ?? 0} menit`, <div className="actions"><button onClick={() => prepareTopup(u)}>Top Up</button><button className="secondary" onClick={() => prepareSession(u)}>{u.status === 'active' && Number(u.default_duration_minutes ?? 0) > 0 ? 'Pakai' : 'Pakai?'}</button><button className="danger" onClick={() => submit(() => disableUser(u))}>Disable</button></div>])} />
+          </Panel>
+        </section>
+      )}
+
+      {activeTab === 'computers' && (
+        <section className="layout">
+          <Panel title="Tambah Komputer">
+            <div className="form two">
+              <input placeholder="Kode, contoh PC-01" {...computerForm.bind('code')} />
+              <input placeholder="Nama komputer" {...computerForm.bind('name')} />
+              <input placeholder="IP address optional" {...computerForm.bind('ip_address')} />
+              <button onClick={() => submit(createComputer)}>Tambah PC</button>
+            </div>
+          </Panel>
+          <Panel title="Komputer" wide>
+            {selectedComputer && (
+              <div className="setup-box">
+                <div>
+                  <strong>{selectedComputer.action === 'setup' ? 'Setup Client' : selectedComputer.action === 'session' ? 'Siap Mulai Session' : 'Status Komputer'}</strong>
+                  <p>{selectedComputer.name} · <b>{selectedComputer.code}</b> · status: <b>{selectedComputer.status}</b></p>
+                </div>
+                <div className="setup-values">
+                  <span>Server: <code>{API_BASE}</code></span>
+                  <span>Kode PC: <code>{selectedComputer.code}</code></span>
+                </div>
+              </div>
+            )}
+            <Table headers={['Kode', 'Nama', 'IP', 'Status', 'Heartbeat', 'Aksi']} rows={computers.map((pc) => [pc.code, pc.name, pc.ip_address ?? '-', <StatusPill status={pc.status} />, pc.last_heartbeat_at ?? '-', <div className="actions"><button type="button" className="secondary" onClick={() => prepareComputer(pc)}>Setup</button><button type="button" className="secondary" onClick={() => prepareComputerForSession(pc)}>Pakai</button><button type="button" className="secondary" onClick={() => submit(() => sendComputerCommand(pc, 'lock'))}>Lock</button><button type="button" className="secondary" onClick={() => submit(() => sendComputerCommand(pc, 'restart'))}>Restart</button><button type="button" className="danger" onClick={() => submit(() => sendComputerCommand(pc, 'shutdown'))}>Shutdown</button><button type="button" className="danger" onClick={() => submit(() => markComputerOffline(pc))}>Offline</button><button type="button" className="danger" onClick={() => submit(() => deleteComputer(pc))}>Hapus</button></div>])} />
+          </Panel>
+        </section>
+      )}
+
+      {activeTab === 'settings' && (
+        <section className="layout">
+          <Panel title="Pengaturan Sistem" subtitle="Setting ini dipakai backend dan client agent." wide>
+            <div className="form two">
+              <label>Nama Instansi<input placeholder="Nama perpustakaan" {...settingsForm.bind('business_name')} /></label>
+              <label>Aksi Saat Waktu Habis<select {...settingsForm.bind('default_expire_action')}><option value="shutdown">Shutdown</option><option value="lock">Lock</option><option value="restart">Restart</option></select></label>
+              <label>Interval Heartbeat Client (detik)<input type="number" min="1" {...settingsForm.bind('heartbeat_interval_seconds')} /></label>
+              <label>Threshold Offline Client (detik)<input type="number" min="1" {...settingsForm.bind('client_offline_threshold_seconds')} /></label>
+              <label>Warning Shutdown (detik)<input type="number" min="1" {...settingsForm.bind('shutdown_warning_seconds')} /></label>
+              <div className="actions settings-actions"><button onClick={() => submit(saveSettings)}>Simpan Pengaturan</button><button className="secondary" onClick={resetSettingsForm}>Reset Form</button></div>
+            </div>
+          </Panel>
+          <Panel title="Paket Durasi" wide>
+            <div className="form inline package-form">
+              <input placeholder="Nama paket" {...packageForm.bind('name')} />
+              <input placeholder="Menit" type="number" min="1" {...packageForm.bind('duration_minutes')} />
+              <button onClick={() => submit(createPackage)}>Tambah Paket</button>
+            </div>
+            <ul className="package-list">{packages.map((p) => <li key={p.id}><strong>{p.name}</strong><span>{p.duration_minutes} menit</span><button className="danger compact" onClick={() => submit(() => deletePackage(p.id))}>Hapus</button></li>)}</ul>
+          </Panel>
+        </section>
+      )}
+
+      {activeTab === 'reports' && (
+        <section className="layout single">
+          <Panel title="Riwayat Aktivitas" wide>
+            <Table headers={['Waktu', 'User', 'PC', 'Aksi', 'Catatan']} rows={logs.slice(0, 20).map((log) => [formatTime(log.created_at), log.username ?? '-', log.computer_code ?? '-', humanAction(log.action), log.note ?? '-'])} />
+          </Panel>
+        </section>
+      )}
     </main>
   );
 }

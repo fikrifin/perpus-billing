@@ -46,6 +46,16 @@ h2 { margin: 0 0 14px; font-size: 20px; }
 
 .alert { margin-top: 18px; padding: 14px 18px; border-radius: 16px; font-weight: 700; }
 .alert.error { background: #ffe4e4; color: #9f1d1d; }
+.tabs { display: flex; gap: 10px; flex-wrap: wrap; margin: 20px 0; padding: 8px; border-radius: 18px; background: #fffaf0; box-shadow: 0 10px 30px rgba(26, 45, 37, .08); }
+.tabs button { width: auto; margin: 0; padding: 10px 14px; border-radius: 14px; background: transparent; color: #50615a; box-shadow: none; }
+.tabs button.active { background: #19362e; color: white; }
+.summary-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.summary-list li { padding: 14px; border-radius: 16px; background: #f5f8f4; display: grid; gap: 4px; }
+.summary-list strong { font-size: 24px; color: #18372e; }
+.summary-list span { color: #65736d; font-size: 13px; }
+.form label { color: #4c5d55; font-weight: 800; }
+.form label input, .form label select { margin-top: 6px; }
+.settings-actions { align-items: end; }
 .alert.success { background: #e1f9e8; color: #166534; }
 
 .grid.stats {
