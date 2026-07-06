@@ -1,0 +1,114 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: white;
+  background: #06120f;
+}
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; }
+main {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(88, 204, 141, .22), transparent 32%),
+    radial-gradient(circle at 80% 0%, rgba(80, 150, 255, .16), transparent 28%),
+    linear-gradient(135deg, #071713, #10241e 48%, #07100d);
+}
+main.unlocked {
+  background:
+    radial-gradient(circle at top, rgba(88, 204, 141, .30), transparent 36%),
+    linear-gradient(135deg, #123629, #0a1713);
+}
+main.locked {
+  box-shadow: inset 0 0 0 9999px rgba(0,0,0,.08);
+}
+.shell { width: min(960px, 92vw); }
+.brand { display: flex; gap: 16px; align-items: center; margin-bottom: 26px; }
+.brand p { margin: 0; color: #9ad8b0; text-transform: uppercase; letter-spacing: .16em; font-size: 12px; }
+.brand h1 { margin: 0; font-size: clamp(42px, 9vw, 96px); line-height: .95; }
+.status { width: 16px; height: 16px; border-radius: 50%; display: block; }
+.status.online { background: #54e07f; box-shadow: 0 0 24px #54e07f; }
+.status.offline { background: #ff6363; box-shadow: 0 0 24px #ff6363; }
+.card {
+  width: min(640px, 100%);
+  padding: clamp(22px, 4vw, 34px);
+  border-radius: 32px;
+  background: rgba(255, 255, 255, .09);
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: 0 30px 90px rgba(0,0,0,.35);
+  backdrop-filter: blur(22px);
+}
+.kicker { margin: 0 0 8px; color: #9ee5b2; letter-spacing: .18em; font-size: 12px; font-weight: 800; }
+h2 { margin: 0; font-size: 30px; }
+.muted { color: #c5d7d0; }
+label { display: block; margin: 14px 0 6px; color: #d8e7e0; font-weight: 700; }
+input, button {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font: inherit;
+}
+input { background: rgba(255,255,255,.10); color: white; outline: none; }
+input:focus { border-color: #77e59b; box-shadow: 0 0 0 4px rgba(119,229,155,.13); }
+button { margin-top: 18px; border: none; background: #62dd86; color: #082014; font-weight: 900; cursor: pointer; }
+button.secondary { background: rgba(255,255,255,.14); color: white; }
+.client-identity { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0; padding: 12px 14px; border-radius: 16px; background: rgba(255,255,255,.08); }
+.client-identity span { font-weight: 900; letter-spacing: .08em; }
+.client-identity button { width: auto; margin: 0; padding: 8px 12px; background: rgba(255,255,255,.14); color: white; font-size: 12px; }
+.config-card { margin: 0 auto; }
+.error { margin-top: 14px; padding: 12px; border-radius: 14px; background: rgba(255, 99, 99, .18); color: #ffd7d7; }
+.active-card, .shutdown-card { text-align: center; margin: 0 auto; }
+.timer {
+  max-width: 100%;
+  padding: 12px 10px;
+  border-radius: 24px;
+  background: rgba(0, 0, 0, .16);
+  font-size: clamp(46px, 10vw, 96px);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-weight: 950;
+  letter-spacing: -.06em;
+  margin: 24px auto 12px;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.shutdown-card { background: rgba(143, 27, 27, .32); border-color: rgba(255, 160, 160, .28); }
+.shutdown-icon { font-size: 96px; line-height: 1; margin: 18px 0 6px; color: #ffb0b0; }
+.shutdown-countdown {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 18px;
+  background: rgba(255,255,255,.12);
+  border: 2px solid rgba(255,255,255,.22);
+  font-size: 42px;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+footer {
+  margin-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #c5d7d0;
+  font-size: 14px;
+}
+@media (max-width: 720px) {
+  body { overflow: auto; }
+  main { min-height: 100vh; height: auto; padding: 20px 0; }
+  .shell { width: min(100% - 28px, 640px); }
+  .brand h1 { font-size: clamp(34px, 14vw, 64px); }
+  h2 { font-size: 24px; }
+  .timer { font-size: clamp(40px, 15vw, 72px); letter-spacing: -.07em; }
+  footer { flex-direction: column; }
+}
+
+@media (max-width: 420px) {
+  .timer { font-size: clamp(34px, 14vw, 54px); }
+  .card { border-radius: 24px; }
+}

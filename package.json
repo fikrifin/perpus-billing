@@ -1,0 +1,22 @@
+{
+  "name": "perpus-billing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aplikasi manajemen akses komputer perpustakaan berbasis LAN lokal.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace apps/backend-server run dev",
+    "start:server": "npm --workspace apps/backend-server start",
+    "smoke:server": "npm --workspace apps/backend-server run smoke",
+    "dev:admin": "npm --workspace apps/admin-desktop run dev",
+    "build:admin": "npm --workspace apps/admin-desktop run build",
+    "dev:client": "npm --workspace apps/client-agent run dev",
+    "build:client": "npm --workspace apps/client-agent run build"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
