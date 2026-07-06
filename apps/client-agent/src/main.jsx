@@ -31,6 +31,17 @@ function App() {
     return Math.max(0, Math.floor((new Date(session.end_time).getTime() - now) / 1000));
   }, [session, now]);
 
+  const usageProgress = useMemo(() => {
+    if (!session?.start_time || !session?.end_time) return 0;
+    const start = new Date(session.start_time).getTime();
+    const end = new Date(session.end_time).getTime();
+    const total = Math.max(1, end - start);
+    const used = Math.min(total, Math.max(0, now - start));
+    return Math.round((used / total) * 100);
+  }, [session, now]);
+
+  const currentActionMeta = actionMeta(expireAction);
+
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -244,25 +255,31 @@ function App() {
   }
 
   return (
-    <main className={session && !shutdownWarning ? 'unlocked' : 'locked'}>
+    <main className={session && !shutdownWarning ? 'unlocked' : shutdownWarning ? 'expired' : 'locked'}>
       <section className="shell">
-        <div className="brand">
-          <span className={serverOnline ? 'status online' : 'status offline'} />
-          <div>
-            <p>{settings.business_name ?? 'Perpus Billing Client'}</p>
-            <h1>{computerCode}</h1>
+        <header className="topbar">
+          <div className="brand">
+            <span className={serverOnline ? 'status online' : 'status offline'} />
+            <div>
+              <p>{settings.business_name ?? 'Perpus Billing Client'}</p>
+              <h1>{computerCode}</h1>
+            </div>
           </div>
-        </div>
+          <div className="connection-pill">
+            <strong>{serverOnline ? 'ONLINE' : 'OFFLINE'}</strong>
+            <span>{serverOnline ? getApiBase() : 'menunggu server'}</span>
+          </div>
+        </header>
 
         {!session && (configurationOpen || !configured) && (
           <form className="card config-card" onSubmit={saveConfiguration}>
             <p className="kicker">CLIENT SETUP</p>
             <h2>Hubungkan komputer ke server</h2>
-            <p className="muted">Masukkan alamat PC operator dan kode komputer yang sudah terdaftar.</p>
-            <label>Alamat server</label>
-            <input value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} placeholder="http://192.168.1.10:3478" />
-            <label>Kode komputer</label>
-            <input value={computerCode} onChange={(e) => setComputerCode(e.target.value)} placeholder="PC-01" />
+            <p className="muted">Masukkan alamat PC operator dan kode komputer yang sudah terdaftar di dashboard admin.</p>
+            <div className="field-grid">
+              <label>Alamat server<input value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} placeholder="http://192.168.1.10:3478" /></label>
+              <label>Kode komputer<input value={computerCode} onChange={(e) => setComputerCode(e.target.value)} placeholder="PC-01" /></label>
+            </div>
             <button type="submit">Simpan & Hubungkan</button>
             {configured && <button type="button" className="secondary" onClick={() => setConfigurationOpen(false)}>Batal</button>}
             {error && <div className="error">{error}</div>}
@@ -270,15 +287,21 @@ function App() {
         )}
 
         {!session && configured && !configurationOpen && (
-          <form className="card" onSubmit={login}>
-            <p className="kicker">LOCK SCREEN</p>
-            <h2>Akses Komputer {settings.business_name ?? 'Perpustakaan'}</h2>
-            <p className="muted">Masukkan username dan password dari operator.</p>
-            <div className="client-identity"><span>{computerCode}</span><button type="button" onClick={() => setConfigurationOpen(true)}>Pengaturan</button></div>
-            <label>Username</label>
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-            <label>Password</label>
-            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" />
+          <form className="card login-card" onSubmit={login}>
+            <div className="lock-header">
+              <div className="lock-icon">⌁</div>
+              <div>
+                <p className="kicker">LOCK SCREEN</p>
+                <h2>Akses Komputer {settings.business_name ?? 'Perpustakaan'}</h2>
+                <p className="muted">Masukkan username dan password dari operator untuk membuka komputer.</p>
+              </div>
+            </div>
+            <div className="client-identity">
+              <span>Komputer <strong>{computerCode}</strong></span>
+              <button type="button" onClick={() => setConfigurationOpen(true)}>Pengaturan</button>
+            </div>
+            <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus /></label>
+            <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" /></label>
             <button type="submit">Login & Mulai Session</button>
             {error && <div className="error">{error}</div>}
           </form>
@@ -289,25 +312,30 @@ function App() {
             <p className="kicker">SESSION ACTIVE</p>
             <h2>Komputer sedang digunakan</h2>
             <div className="timer">{formatDuration(remainingSeconds)}</div>
-            <p className="muted">User: <strong>{username}</strong> · Session #{session.id}</p>
+            <div className="progress-track"><span style={{ width: `${usageProgress}%` }} /></div>
+            <div className="session-meta">
+              <span>User <strong>{username}</strong></span>
+              <span>Session <strong>#{session.id}</strong></span>
+              <span>Selesai <strong>{formatClock(session.end_time)}</strong></span>
+            </div>
             <button className="secondary" onClick={stopSession}>Logout / Selesai</button>
           </div>
         )}
 
         {shutdownWarning && (
-          <div className="card shutdown-card">
+          <div className={`card shutdown-card action-${expireAction}`}>
             <p className="kicker">TIME EXPIRED</p>
-            <h2>Waktu penggunaan habis</h2>
-            <div className="shutdown-icon">⏻</div>
+            <h2>{remoteCommand ? 'Command operator diterima' : 'Waktu penggunaan habis'}</h2>
+            <div className="shutdown-icon">{currentActionMeta.icon}</div>
             <div className="shutdown-countdown">{shutdownSeconds}</div>
-            <p>{remoteCommand ? `Simulasi command ${remoteCommand.command}. ` : `Aksi default: ${actionLabel(expireAction)}. `}Di Windows final, agent akan menjalankan aksi OS otomatis.</p>
+            <p>{remoteCommand ? `Simulasi command ${remoteCommand.command}. ` : `Aksi default: ${currentActionMeta.label}. `}Di Windows final, agent akan menjalankan aksi OS otomatis.</p>
             <button onClick={() => resetToLock('Komputer kembali terkunci. Hubungi operator untuk isi ulang waktu.')}>Kembali ke lock screen</button>
           </div>
         )}
 
         <footer>
-          <span>{serverOnline ? `Terhubung ke ${getApiBase()}` : 'Server belum terhubung'}</span>
           <span>{message}</span>
+          <span>Heartbeat {settings.heartbeat_interval_seconds ?? 5}s · Warning {settings.shutdown_warning_seconds ?? 60}s</span>
         </footer>
       </section>
     </main>
@@ -319,6 +347,19 @@ function formatDuration(total) {
   const m = Math.floor((total % 3600) / 60).toString().padStart(2, '0');
   const s = Math.floor(total % 60).toString().padStart(2, '0');
   return `${h}:${m}:${s}`;
+}
+
+function formatClock(value) {
+  return value ? new Date(value).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-';
+}
+
+function actionMeta(action) {
+  const meta = {
+    shutdown: { icon: '⏻', label: 'shutdown' },
+    restart: { icon: '↻', label: 'restart' },
+    lock: { icon: '⌁', label: 'lock' }
+  };
+  return meta[action] ?? meta.shutdown;
 }
 
 createRoot(document.getElementById('root')).render(<App />);
