@@ -16,6 +16,7 @@ function App() {
   const [error, setError] = useState('');
   const [shutdownWarning, setShutdownWarning] = useState(false);
   const [shutdownSeconds, setShutdownSeconds] = useState(60);
+  const [remoteCommand, setRemoteCommand] = useState(null);
   const [now, setNow] = useState(Date.now());
 
   const remainingSeconds = useMemo(() => {
@@ -36,6 +37,9 @@ function App() {
         if (cancelled) return;
         setServerOnline(true);
         setConfigured(true);
+        if (data.commands?.length) {
+          for (const command of data.commands) await handleRemoteCommand(command);
+        }
         if (data.activeSession) {
           applyActiveSession(data.activeSession, 'Session aktif dipulihkan dari server.');
         } else if (session && !shutdownWarning) {
@@ -65,6 +69,9 @@ function App() {
         const msg = JSON.parse(event.data);
         const payload = msg.payload;
         if (!payload || payload.computer_code !== computerCode) return;
+        if (msg.type === 'client.command') {
+          handleRemoteCommand(payload);
+        }
         if (msg.type === 'session.started') {
           applyActiveSession(payload, 'Session dimulai oleh operator.');
         }
@@ -161,19 +168,39 @@ function App() {
     resetToLock('Session selesai. Hubungi operator untuk isi ulang jika waktu sudah habis.');
   }
 
+  async function handleRemoteCommand(command) {
+    setRemoteCommand(command);
+    if (command.command === 'lock') {
+      if (session) {
+        try { await postJson(`/api/sessions/${session.id}/stop`, { note: 'Remote lock from operator' }); } catch (_) {}
+      }
+      resetToLock('Komputer dikunci oleh operator.');
+    }
+    if (command.command === 'shutdown') {
+      triggerShutdownWarning('Command shutdown diterima dari operator.');
+    }
+    if (command.command === 'restart') {
+      triggerShutdownWarning('Command restart diterima. Prototype menampilkan simulasi restart/shutdown.');
+    }
+    try {
+      await postJson(`/api/client-commands/${command.id}/ack`, { status: 'acknowledged', note: 'Handled by web prototype client' });
+    } catch (_) {}
+  }
+
   function resetToLock(nextMessage) {
     setSession(null);
     setShutdownWarning(false);
     setShutdownSeconds(60);
     setUsername('');
     setPassword('');
+    setRemoteCommand(null);
     setMessage(nextMessage);
   }
 
-  function triggerShutdownWarning() {
+  function triggerShutdownWarning(nextMessage = 'Waktu habis. Komputer akan shutdown.') {
     setShutdownWarning(true);
     setShutdownSeconds(60);
-    setMessage('Waktu habis. Komputer akan shutdown.');
+    setMessage(nextMessage);
   }
 
   return (
@@ -233,7 +260,7 @@ function App() {
             <h2>Waktu penggunaan habis</h2>
             <div className="shutdown-icon">⏻</div>
             <div className="shutdown-countdown">{shutdownSeconds}</div>
-            <p>Simulasi shutdown berjalan. Di Windows final, agent akan menjalankan shutdown otomatis.</p>
+            <p>{remoteCommand ? `Simulasi command ${remoteCommand.command}. ` : ''}Di Windows final, agent akan menjalankan aksi OS otomatis.</p>
             <button onClick={() => resetToLock('Komputer kembali terkunci. Hubungi operator untuk isi ulang waktu.')}>Kembali ke lock screen</button>
           </div>
         )}

@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
-import { db, migrate, nowIso, addMinutes, publicUser } from './db.js';
+import { db, migrate, nowIso, addMinutes, hashPassword, verifyPassword, publicUser } from './db.js';
 import { broadcast, registerRealtime } from './realtime.js';
 
 migrate();
@@ -48,6 +48,26 @@ function remainingWholeMinutes(endTime, from = new Date()) {
   return remainingMs > 0 ? Math.ceil(remainingMs / 60_000) : 0;
 }
 
+function getSettingNumber(key, fallback) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  const value = Number(row?.value);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function nextStatusAfterSession(user, fallbackStatus) {
+  if (user?.user_type === 'one_time') return fallbackStatus === 'active' ? 'used' : fallbackStatus;
+  return fallbackStatus;
+}
+
+function commandDetails(commandId) {
+  return db.prepare(`
+    SELECT cc.*, c.code as computer_code
+    FROM client_commands cc
+    JOIN computers c ON c.id = cc.computer_id
+    WHERE cc.id = ?
+  `).get(commandId);
+}
+
 function extendActiveSession(session, minutes, operatorId = null, note = null) {
   const base = new Date(session.end_time) > new Date() ? new Date(session.end_time) : new Date();
   const newEnd = addMinutes(base, minutes);
@@ -64,8 +84,9 @@ function expireDueSessions() {
   const expiredAt = nowIso();
   const due = db.prepare(`SELECT * FROM sessions WHERE status = 'active' AND end_time <= ?`).all(expiredAt);
   for (const session of due) {
-    const user = db.prepare('SELECT default_duration_minutes FROM users WHERE id = ?').get(session.user_id);
-    const nextUserStatus = Number(user?.default_duration_minutes ?? 0) > 0 ? 'active' : 'expired';
+    const user = db.prepare('SELECT user_type, default_duration_minutes FROM users WHERE id = ?').get(session.user_id);
+    const balanceStatus = Number(user?.default_duration_minutes ?? 0) > 0 ? 'active' : 'expired';
+    const nextUserStatus = nextStatusAfterSession(user, balanceStatus);
     db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('expired', session.id);
     db.prepare('UPDATE computers SET status = ?, active_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('expired', session.computer_id);
     db.prepare(`UPDATE users SET status = ?, expired_at = CASE WHEN ? = 'expired' THEN COALESCE(expired_at, ?) ELSE NULL END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
@@ -76,7 +97,25 @@ function expireDueSessions() {
   }
 }
 
+function markOfflineComputers() {
+  const thresholdSeconds = getSettingNumber('client_offline_threshold_seconds', 30);
+  const cutoff = new Date(Date.now() - thresholdSeconds * 1000).toISOString();
+  const stale = db.prepare(`
+    SELECT * FROM computers
+    WHERE status != 'offline'
+      AND active_session_id IS NULL
+      AND last_heartbeat_at IS NOT NULL
+      AND last_heartbeat_at < ?
+  `).all(cutoff);
+  for (const computer of stale) {
+    db.prepare(`UPDATE computers SET status = 'offline', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(computer.id);
+    const updated = db.prepare('SELECT * FROM computers WHERE id = ?').get(computer.id);
+    broadcast('computer.offline', updated);
+  }
+}
+
 setInterval(expireDueSessions, 1000);
+setInterval(markOfflineComputers, 5000);
 
 app.get('/health', async () => ({ ok: true, service: 'perpus-billing-backend', at: nowIso() }));
 
@@ -84,7 +123,7 @@ app.post('/api/auth/login', async (req, reply) => {
   const missing = required(req.body, ['username', 'password']);
   if (missing) return reply.code(400).send({ error: `${missing} wajib diisi` });
   const operator = db.prepare('SELECT * FROM operators WHERE username = ? AND is_active = 1').get(req.body.username);
-  if (!operator || operator.password_hash !== req.body.password) return reply.code(401).send({ error: 'Username/password operator tidak valid' });
+  if (!operator || !verifyPassword(req.body.password, operator.password_hash)) return reply.code(401).send({ error: 'Username/password operator tidak valid' });
   const { password_hash, ...safe } = operator;
   return { operator: safe };
 });
@@ -112,26 +151,96 @@ app.patch('/api/computers/:id', async (req, reply) => {
   broadcast('computer.updated', row);
   return row;
 });
+app.delete('/api/computers/:id', async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM computers WHERE id = ? OR code = ?').get(req.params.id, req.params.id);
+  if (!existing) return reply.code(404).send({ error: 'Komputer tidak ditemukan' });
+  if (activeSessionForComputer(existing.id)) return reply.code(409).send({ error: 'Komputer masih punya session aktif' });
+  const hasHistory = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM sessions WHERE computer_id = ?) +
+      (SELECT COUNT(*) FROM usage_logs WHERE computer_id = ?) as total
+  `).get(existing.id, existing.id).total;
+  if (hasHistory > 0) return reply.code(409).send({ error: 'Komputer sudah punya riwayat penggunaan. Tandai offline saja agar laporan historis tetap aman.' });
+  db.prepare('DELETE FROM client_commands WHERE computer_id = ?').run(existing.id);
+  db.prepare('DELETE FROM computers WHERE id = ?').run(existing.id);
+  broadcast('computer.deleted', existing);
+  return { ok: true, deleted: existing };
+});
+app.post('/api/computers/:id/command', async (req, reply) => {
+  const computer = db.prepare('SELECT * FROM computers WHERE id = ? OR code = ?').get(req.params.id, req.params.id);
+  if (!computer) return reply.code(404).send({ error: 'Komputer tidak ditemukan' });
+  const command = req.body?.command;
+  if (!['lock', 'shutdown', 'restart'].includes(command)) return reply.code(400).send({ error: 'command harus lock, shutdown, atau restart' });
+  const result = db.prepare('INSERT INTO client_commands (computer_id, operator_id, command, note) VALUES (?, ?, ?, ?)')
+    .run(computer.id, req.body?.operator_id ?? null, command, req.body?.note ?? null);
+  const row = commandDetails(result.lastInsertRowid);
+  db.prepare('INSERT INTO usage_logs (computer_id, operator_id, action, note) VALUES (?, ?, ?, ?)')
+    .run(computer.id, req.body?.operator_id ?? null, 'client_command', `${command}${req.body?.note ? `: ${req.body.note}` : ''}`);
+  broadcast('client.command', row);
+  return reply.code(201).send(row);
+});
+app.post('/api/client-commands/:id/ack', async (req, reply) => {
+  const command = db.prepare('SELECT * FROM client_commands WHERE id = ?').get(req.params.id);
+  if (!command) return reply.code(404).send({ error: 'Command tidak ditemukan' });
+  const status = req.body?.status === 'failed' ? 'failed' : 'acknowledged';
+  db.prepare('UPDATE client_commands SET status = ?, acknowledged_at = ?, note = COALESCE(?, note) WHERE id = ?')
+    .run(status, nowIso(), req.body?.note ?? null, command.id);
+  const row = commandDetails(command.id);
+  broadcast('client.command_ack', row);
+  return row;
+});
 
 app.post('/api/computers/:id/heartbeat', async (req, reply) => {
   const computer = db.prepare('SELECT * FROM computers WHERE id = ? OR code = ?').get(req.params.id, req.params.id);
   if (!computer) return reply.code(404).send({ error: 'Komputer tidak ditemukan' });
   const session = activeSessionForComputer(computer.id);
   const status = session ? 'in_use' : 'idle';
+  const heartbeatAt = nowIso();
   db.prepare(`UPDATE computers SET status = ?, last_heartbeat_at = ?, client_version = COALESCE(?, client_version), active_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-    .run(status, nowIso(), req.body?.clientVersion ?? null, session?.id ?? null, computer.id);
+    .run(status, heartbeatAt, req.body?.clientVersion ?? null, session?.id ?? null, computer.id);
+  const pendingCommands = db.prepare(`
+    SELECT cc.*, c.code as computer_code
+    FROM client_commands cc
+    JOIN computers c ON c.id = cc.computer_id
+    WHERE cc.computer_id = ? AND cc.status = 'pending'
+    ORDER BY cc.id
+    LIMIT 10
+  `).all(computer.id);
+  if (pendingCommands.length) {
+    const markSent = db.prepare(`UPDATE client_commands SET status = 'sent', sent_at = ? WHERE id = ?`);
+    db.transaction((rows) => {
+      for (const row of rows) markSent.run(heartbeatAt, row.id);
+    })(pendingCommands);
+  }
   const updated = db.prepare('SELECT * FROM computers WHERE id = ?').get(computer.id);
   broadcast('computer.heartbeat', updated);
-  return { computer: updated, activeSession: session ? sessionDetails(session.id) : null };
+  return { computer: updated, activeSession: session ? sessionDetails(session.id) : null, commands: pendingCommands };
 });
 
 app.get('/api/access-duration-packages', async () => db.prepare('SELECT * FROM access_duration_packages ORDER BY duration_minutes').all());
 app.post('/api/access-duration-packages', async (req, reply) => {
   const missing = required(req.body, ['name', 'duration_minutes']);
   if (missing) return reply.code(400).send({ error: `${missing} wajib diisi` });
+  const duration = readPositiveMinutes(req.body.duration_minutes);
+  if (duration <= 0) return reply.code(400).send({ error: 'duration_minutes harus lebih dari 0' });
   const result = db.prepare('INSERT INTO access_duration_packages (name, duration_minutes, is_active) VALUES (?, ?, ?)')
-    .run(req.body.name, Number(req.body.duration_minutes), req.body.is_active === false ? 0 : 1);
+    .run(req.body.name, duration, req.body.is_active === false ? 0 : 1);
   return reply.code(201).send(db.prepare('SELECT * FROM access_duration_packages WHERE id = ?').get(result.lastInsertRowid));
+});
+app.patch('/api/access-duration-packages/:id', async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM access_duration_packages WHERE id = ?').get(req.params.id);
+  if (!existing) return reply.code(404).send({ error: 'Paket durasi tidak ditemukan' });
+  const duration = req.body.duration_minutes === undefined ? existing.duration_minutes : readPositiveMinutes(req.body.duration_minutes);
+  if (duration <= 0) return reply.code(400).send({ error: 'duration_minutes harus lebih dari 0' });
+  db.prepare(`UPDATE access_duration_packages SET name = COALESCE(?, name), duration_minutes = ?, is_active = COALESCE(?, is_active), updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .run(req.body.name ?? null, duration, req.body.is_active === undefined ? null : req.body.is_active ? 1 : 0, existing.id);
+  return db.prepare('SELECT * FROM access_duration_packages WHERE id = ?').get(existing.id);
+});
+app.delete('/api/access-duration-packages/:id', async (req, reply) => {
+  const existing = db.prepare('SELECT * FROM access_duration_packages WHERE id = ?').get(req.params.id);
+  if (!existing) return reply.code(404).send({ error: 'Paket durasi tidak ditemukan' });
+  db.prepare('DELETE FROM access_duration_packages WHERE id = ?').run(existing.id);
+  return { ok: true, deleted: existing };
 });
 
 app.get('/api/users', async (req) => {
@@ -144,7 +253,7 @@ app.post('/api/users', async (req, reply) => {
   if (!['member', 'one_time'].includes(req.body.user_type)) return reply.code(400).send({ error: 'user_type harus member atau one_time' });
   try {
     const result = db.prepare(`INSERT INTO users (username, password_hash, user_type, full_name, member_number, identity_number_optional, default_duration_minutes, created_by_operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)      
-      .run(req.body.username, req.body.password, req.body.user_type, req.body.full_name ?? null, req.body.member_number ?? null, req.body.identity_number_optional ?? null, req.body.default_duration_minutes ?? null, req.body.created_by_operator_id ?? null);
+      .run(req.body.username, hashPassword(req.body.password), req.body.user_type, req.body.full_name ?? null, req.body.member_number ?? null, req.body.identity_number_optional ?? null, req.body.default_duration_minutes ?? null, req.body.created_by_operator_id ?? null);
     return reply.code(201).send(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid)));
   } catch (error) {
     return reply.code(409).send({ error: 'Username sudah digunakan' });
@@ -154,9 +263,28 @@ app.post('/api/users/validate-login', async (req, reply) => {
   const missing = required(req.body, ['username', 'password']);
   if (missing) return reply.code(400).send({ error: `${missing} wajib diisi` });
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(req.body.username);
-  if (!user || user.password_hash !== req.body.password) return reply.code(401).send({ error: 'Username/password tidak valid' });
+  if (!user || !verifyPassword(req.body.password, user.password_hash)) return reply.code(401).send({ error: 'Username/password tidak valid' });
   if (!['active'].includes(user.status)) return reply.code(403).send({ error: `Akun tidak aktif: ${user.status}` });
   return { user: publicUser(user) };
+});
+app.post('/api/users/:id/disable', async (req, reply) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ? OR username = ?').get(req.params.id, req.params.id);
+  if (!user) return reply.code(404).send({ error: 'User tidak ditemukan' });
+  if (activeSessionForUser(user.id)) return reply.code(409).send({ error: 'User masih punya session aktif' });
+  db.prepare(`UPDATE users SET status = 'disabled', cancelled_at = COALESCE(cancelled_at, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(nowIso(), user.id);
+  db.prepare('INSERT INTO usage_logs (user_id, operator_id, action, note) VALUES (?, ?, ?, ?)')
+    .run(user.id, req.body?.operator_id ?? null, 'user_disabled', req.body?.note ?? null);
+  return publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
+});
+app.post('/api/users/:id/reset-password', async (req, reply) => {
+  const missing = required(req.body, ['password']);
+  if (missing) return reply.code(400).send({ error: `${missing} wajib diisi` });
+  const user = db.prepare('SELECT * FROM users WHERE id = ? OR username = ?').get(req.params.id, req.params.id);
+  if (!user) return reply.code(404).send({ error: 'User tidak ditemukan' });
+  db.prepare(`UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(hashPassword(req.body.password), user.id);
+  db.prepare('INSERT INTO usage_logs (user_id, operator_id, action, note) VALUES (?, ?, ?, ?)')
+    .run(user.id, req.body?.operator_id ?? null, 'user_password_reset', 'Password user direset operator');
+  return publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
 });
 
 app.get('/api/sessions', async () => db.prepare(`SELECT s.*, u.username, c.code as computer_code FROM sessions s JOIN users u ON u.id = s.user_id JOIN computers c ON c.id = s.computer_id ORDER BY s.id DESC`).all());
@@ -166,7 +294,7 @@ app.post('/api/sessions/start', async (req, reply) => {
   if (missing) return reply.code(400).send({ error: `${missing} wajib diisi` });
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(req.body.username);
   const operatorStart = Boolean(req.body.operator_id);
-  if (!user || (!operatorStart && user.password_hash !== req.body.password)) return reply.code(401).send({ error: 'Username/password tidak valid' });
+  if (!user || (!operatorStart && !verifyPassword(req.body.password, user.password_hash))) return reply.code(401).send({ error: 'Username/password tidak valid' });
   if (user.status !== 'active') return reply.code(403).send({ error: `Akun tidak aktif: ${user.status}` });
   if (activeSessionForUser(user.id)) return reply.code(409).send({ error: 'User masih punya session aktif' });
   const computer = db.prepare('SELECT * FROM computers WHERE code = ?').get(req.body.computer_code);
@@ -205,6 +333,9 @@ app.post('/api/users/:username/topup', async (req, reply) => {
   if (!user) return reply.code(404).send({ error: 'User tidak ditemukan' });
 
   const activeSession = activeSessionForUser(user.id);
+  if (!activeSession && user.user_type === 'one_time' && ['used', 'expired', 'cancelled'].includes(user.status)) {
+    return reply.code(409).send({ error: 'Akun one-time yang sudah selesai tidak bisa diisi ulang. Buat akun one-time baru.' });
+  }
   if (activeSession) {
     const session = extendActiveSession(activeSession, minutes, req.body?.operator_id ?? null, req.body?.note ?? `Top up ${minutes} minutes for ${user.username}`);
     const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
@@ -225,8 +356,9 @@ app.post('/api/sessions/:id/expire', async (req, reply) => {
   if (!session) return reply.code(404).send({ error: 'Session tidak ditemukan' });
   if (session.status !== 'active') return reply.code(409).send({ error: 'Session tidak aktif' });
   const expiredAt = nowIso();
-  const user = db.prepare('SELECT default_duration_minutes FROM users WHERE id = ?').get(session.user_id);
-  const nextUserStatus = Number(user?.default_duration_minutes ?? 0) > 0 ? 'active' : 'expired';
+  const user = db.prepare('SELECT user_type, default_duration_minutes FROM users WHERE id = ?').get(session.user_id);
+  const balanceStatus = Number(user?.default_duration_minutes ?? 0) > 0 ? 'active' : 'expired';
+  const nextUserStatus = nextStatusAfterSession(user, balanceStatus);
   db.prepare('UPDATE sessions SET status = ?, end_time = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('expired', expiredAt, req.params.id);
   db.prepare('UPDATE computers SET status = ?, active_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('expired', session.computer_id);
   db.prepare(`UPDATE users SET status = ?, expired_at = CASE WHEN ? = 'expired' THEN COALESCE(expired_at, ?) ELSE NULL END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
@@ -245,9 +377,11 @@ app.post('/api/sessions/:id/stop', async (req, reply) => {
   const stopStatus = req.body?.status ?? 'completed';
   const stoppedAt = new Date();
   const stoppedAtIso = stoppedAt.toISOString();
-  const shouldRefund = stopStatus !== 'expired' && req.body?.consume_remaining !== true;
+  const user = db.prepare('SELECT user_type FROM users WHERE id = ?').get(session.user_id);
+  const shouldRefund = user?.user_type !== 'one_time' && stopStatus !== 'expired' && req.body?.consume_remaining !== true;
   const refundedMinutes = shouldRefund ? remainingWholeMinutes(session.end_time, stoppedAt) : 0;
-  const nextUserStatus = stopStatus === 'expired' ? 'expired' : refundedMinutes > 0 ? 'active' : 'used';
+  const balanceStatus = stopStatus === 'expired' ? 'expired' : refundedMinutes > 0 ? 'active' : 'used';
+  const nextUserStatus = nextStatusAfterSession(user, balanceStatus);
   const noteParts = [req.body?.note].filter(Boolean);
   if (refundedMinutes > 0) noteParts.push(`Refunded ${refundedMinutes} remaining minutes to user balance`);
 

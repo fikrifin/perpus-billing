@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import crypto from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
@@ -93,6 +94,19 @@ export function migrate() {
       FOREIGN KEY(computer_id) REFERENCES computers(id),
       FOREIGN KEY(operator_id) REFERENCES operators(id)
     );
+    CREATE TABLE IF NOT EXISTS client_commands (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      computer_id INTEGER NOT NULL,
+      operator_id INTEGER,
+      command TEXT NOT NULL CHECK(command IN ('lock', 'shutdown', 'restart')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'acknowledged', 'failed', 'cancelled')),
+      note TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      sent_at TEXT,
+      acknowledged_at TEXT,
+      FOREIGN KEY(computer_id) REFERENCES computers(id),
+      FOREIGN KEY(operator_id) REFERENCES operators(id)
+    );
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -105,7 +119,7 @@ export function migrate() {
 function seed() {
   if (db.prepare('SELECT COUNT(*) as total FROM operators').get().total === 0) {
     db.prepare('INSERT INTO operators (name, username, password_hash, role) VALUES (?, ?, ?, ?)')
-      .run('Administrator', 'admin', 'admin', 'admin');
+      .run('Administrator', 'admin', hashPassword('admin'), 'admin');
   }
   if (db.prepare('SELECT COUNT(*) as total FROM access_duration_packages').get().total === 0) {
     const insert = db.prepare('INSERT INTO access_duration_packages (name, duration_minutes) VALUES (?, ?)');
@@ -125,11 +139,11 @@ function seed() {
 
   const upsertUser = db.prepare(`INSERT OR IGNORE INTO users (username, password_hash, user_type, full_name, member_number, default_duration_minutes) VALUES (?, ?, ?, ?, ?, ?)`);
   const demoUsers = [
-    ['user001', '123456', 'member', 'Demo User 001', 'A001', 60],
-    ['user002', '123456', 'member', 'Demo User 002', 'A002', 90],
-    ['user003', '123456', 'member', 'Demo User 003', 'A003', 120],
-    ['guest001', '123456', 'one_time', 'Demo Guest 001', null, 30],
-    ['guest002', '123456', 'one_time', 'Demo Guest 002', null, 60]
+    ['user001', hashPassword('123456'), 'member', 'Demo User 001', 'A001', 60],
+    ['user002', hashPassword('123456'), 'member', 'Demo User 002', 'A002', 90],
+    ['user003', hashPassword('123456'), 'member', 'Demo User 003', 'A003', 120],
+    ['guest001', hashPassword('123456'), 'one_time', 'Demo Guest 001', null, 30],
+    ['guest002', hashPassword('123456'), 'one_time', 'Demo Guest 002', null, 60]
   ];
   for (const user of demoUsers) upsertUser.run(...user);
   const defaults = [
@@ -146,6 +160,12 @@ function seed() {
 
 export function nowIso() { return new Date().toISOString(); }
 export function addMinutes(date, minutes) { return new Date(date.getTime() + minutes * 60_000).toISOString(); }
+export function hashPassword(password) { return `sha256:${crypto.createHash('sha256').update(String(password)).digest('hex')}`; }
+export function verifyPassword(password, storedHash) {
+  if (!storedHash) return false;
+  if (storedHash.startsWith('sha256:')) return hashPassword(password) === storedHash;
+  return String(password) === storedHash;
+}
 export function publicUser(row) {
   if (!row) return row;
   const { password_hash, ...safe } = row;

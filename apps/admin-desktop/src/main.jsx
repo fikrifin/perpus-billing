@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { API_BASE, getJson, patchJson, postJson } from './api.js';
+import { API_BASE, deleteJson, getJson, patchJson, postJson } from './api.js';
 import './styles.css';
 
 function useForm(initial) {
@@ -36,6 +36,8 @@ function App() {
   const loginForm = useForm({ username: 'admin', password: 'admin' });
   const computerForm = useForm({ code: '', name: '', ip_address: '' });
   const userForm = useForm({ username: '', password: '', user_type: 'member', full_name: '', member_number: '', default_duration_minutes: '60' });
+  const packageForm = useForm({ name: '', duration_minutes: '60' });
+  const passwordForm = useForm({ username: '', password: '' });
   const sessionForm = useForm({ username: '', computer_code: '', duration_minutes: '60' });
   const extendForm = useForm({ session_id: '', minutes: '30' });
   const topupForm = useForm({ username: '', minutes: '60' });
@@ -119,6 +121,49 @@ function App() {
     });
     userForm.reset();
     setNotice('User berhasil dibuat');
+  }
+
+  async function createPackage() {
+    await postJson('/api/access-duration-packages', {
+      name: packageForm.values.name,
+      duration_minutes: Number(packageForm.values.duration_minutes || 0)
+    });
+    packageForm.reset();
+    setNotice('Paket durasi berhasil dibuat');
+  }
+
+  async function deletePackage(id) {
+    await deleteJson(`/api/access-duration-packages/${id}`);
+    setNotice('Paket durasi dihapus');
+  }
+
+  async function disableUser(user) {
+    await postJson(`/api/users/${encodeURIComponent(user.username)}/disable`, { operator_id: operator?.id, note: 'Disabled from dashboard' });
+    setNotice(`${user.username} dinonaktifkan`);
+  }
+
+  async function resetUserPassword() {
+    await postJson(`/api/users/${encodeURIComponent(passwordForm.values.username)}/reset-password`, {
+      password: passwordForm.values.password,
+      operator_id: operator?.id
+    });
+    passwordForm.reset();
+    setNotice('Password user berhasil direset');
+  }
+
+  async function sendComputerCommand(pc, command) {
+    await postJson(`/api/computers/${encodeURIComponent(pc.code)}/command`, {
+      command,
+      operator_id: operator?.id,
+      note: `Command ${command} from dashboard`
+    });
+    setNotice(`Command ${command} dikirim ke ${pc.code}`);
+  }
+
+  async function deleteComputer(pc) {
+    await deleteJson(`/api/computers/${encodeURIComponent(pc.code)}`);
+    if (selectedComputer?.code === pc.code) setSelectedComputer(null);
+    setNotice(`${pc.code} dihapus`);
   }
 
   async function startSession() {
@@ -288,7 +333,7 @@ function App() {
               </div>
             </div>
           )}
-          <Table headers={['Kode', 'Nama', 'IP', 'Status', 'Heartbeat', 'Aksi']} rows={computers.map((pc) => [pc.code, pc.name, pc.ip_address ?? '-', <StatusPill status={pc.status} />, pc.last_heartbeat_at ?? '-', <div className="actions"><button type="button" className="secondary" onClick={() => prepareComputer(pc)}>Setup</button><button type="button" className="secondary" onClick={() => prepareComputerForSession(pc)}>Pakai</button><button type="button" className="danger" onClick={() => submit(() => markComputerOffline(pc))}>Offline</button></div>])} />
+          <Table headers={['Kode', 'Nama', 'IP', 'Status', 'Heartbeat', 'Aksi']} rows={computers.map((pc) => [pc.code, pc.name, pc.ip_address ?? '-', <StatusPill status={pc.status} />, pc.last_heartbeat_at ?? '-', <div className="actions"><button type="button" className="secondary" onClick={() => prepareComputer(pc)}>Setup</button><button type="button" className="secondary" onClick={() => prepareComputerForSession(pc)}>Pakai</button><button type="button" className="secondary" onClick={() => submit(() => sendComputerCommand(pc, 'lock'))}>Lock</button><button type="button" className="secondary" onClick={() => submit(() => sendComputerCommand(pc, 'restart'))}>Restart</button><button type="button" className="danger" onClick={() => submit(() => sendComputerCommand(pc, 'shutdown'))}>Shutdown</button><button type="button" className="danger" onClick={() => submit(() => markComputerOffline(pc))}>Offline</button><button type="button" className="danger" onClick={() => submit(() => deleteComputer(pc))}>Hapus</button></div>])} />
         </Panel>
         <Panel title="Session Aktif" wide>
           <div className="form inline">
@@ -307,10 +352,20 @@ function App() {
             <input placeholder="Menit" type="number" min="1" {...topupForm.bind('minutes')} />
             <button onClick={() => submit(topupUser)}>Isi Ulang Waktu</button>
           </div>
-          <Table headers={['Username', 'Nama', 'Tipe', 'Status', 'Saldo Waktu', 'Aksi']} rows={users.slice(0, 12).map((u) => [u.username, u.full_name ?? '-', u.user_type, <StatusPill status={u.status} />, `${u.default_duration_minutes ?? 0} menit`, <div className="actions"><button onClick={() => prepareTopup(u)}>Top Up</button><button className="secondary" onClick={() => prepareSession(u)}>{u.status === 'active' && Number(u.default_duration_minutes ?? 0) > 0 ? 'Pakai' : 'Pakai?'}</button></div>])} />
+          <div className="form inline">
+            <input placeholder="Username reset password" {...passwordForm.bind('username')} />
+            <input placeholder="Password baru" {...passwordForm.bind('password')} />
+            <button onClick={() => submit(resetUserPassword)}>Reset Password</button>
+          </div>
+          <Table headers={['Username', 'Nama', 'Tipe', 'Status', 'Saldo Waktu', 'Aksi']} rows={users.slice(0, 12).map((u) => [u.username, u.full_name ?? '-', u.user_type, <StatusPill status={u.status} />, `${u.default_duration_minutes ?? 0} menit`, <div className="actions"><button onClick={() => prepareTopup(u)}>Top Up</button><button className="secondary" onClick={() => prepareSession(u)}>{u.status === 'active' && Number(u.default_duration_minutes ?? 0) > 0 ? 'Pakai' : 'Pakai?'}</button><button className="danger" onClick={() => submit(() => disableUser(u))}>Disable</button></div>])} />
         </Panel>
         <Panel title="Paket Durasi">
-          <ul className="package-list">{packages.map((p) => <li key={p.id}><strong>{p.name}</strong><span>{p.duration_minutes} menit</span></li>)}</ul>
+          <div className="form inline package-form">
+            <input placeholder="Nama paket" {...packageForm.bind('name')} />
+            <input placeholder="Menit" type="number" min="1" {...packageForm.bind('duration_minutes')} />
+            <button onClick={() => submit(createPackage)}>Tambah Paket</button>
+          </div>
+          <ul className="package-list">{packages.map((p) => <li key={p.id}><strong>{p.name}</strong><span>{p.duration_minutes} menit</span><button className="danger compact" onClick={() => submit(() => deletePackage(p.id))}>Hapus</button></li>)}</ul>
         </Panel>
       </section>
 
@@ -346,7 +401,10 @@ function humanAction(action) {
     session_stopped: 'Session selesai',
     session_expired: 'Waktu habis',
     session_expired_manual: 'Expired manual',
-    user_topup: 'Top up user'
+    user_topup: 'Top up user',
+    user_disabled: 'User disabled',
+    user_password_reset: 'Reset password',
+    client_command: 'Command client'
   };
   return labels[action] ?? action;
 }

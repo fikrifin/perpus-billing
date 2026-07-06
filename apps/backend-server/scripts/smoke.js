@@ -15,14 +15,16 @@ const server = spawn(process.execPath, ['src/server.js'], {
 const base = `http://127.0.0.1:${port}`;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function request(path, options = {}) {
-  const res = await fetch(`${base}${path}`, { headers: { 'content-type': 'application/json' }, ...options });
+  const headers = options.body ? { 'content-type': 'application/json', ...(options.headers ?? {}) } : options.headers;
+  const res = await fetch(`${base}${path}`, { ...options, headers });
   const body = await res.json();
   if (!res.ok) throw new Error(`${path} failed ${res.status}: ${JSON.stringify(body)}`);
   return body;
 }
 
 async function requestExpectError(path, status, options = {}) {
-  const res = await fetch(`${base}${path}`, { headers: { 'content-type': 'application/json' }, ...options });
+  const headers = options.body ? { 'content-type': 'application/json', ...(options.headers ?? {}) } : options.headers;
+  const res = await fetch(`${base}${path}`, { ...options, headers });
   const body = await res.json();
   if (res.status !== status) throw new Error(`${path} expected ${status}, got ${res.status}: ${JSON.stringify(body)}`);
   return body;
@@ -33,6 +35,15 @@ try {
   await request('/health');
   await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'admin' }) });
   const computer = await request('/api/computers', { method: 'POST', body: JSON.stringify({ code: `PC-SMOKE-${Date.now()}`, name: 'PC Smoke Test' }) });
+  const command = await request(`/api/computers/${computer.code}/command`, { method: 'POST', body: JSON.stringify({ command: 'lock', note: 'Smoke command' }) });
+  let commandHeartbeat = await request(`/api/computers/${computer.code}/heartbeat`, { method: 'POST', body: JSON.stringify({ clientVersion: 'smoke' }) });
+  if (commandHeartbeat.commands?.[0]?.id !== command.id) throw new Error('Heartbeat did not deliver pending command');
+  const ack = await request(`/api/client-commands/${command.id}/ack`, { method: 'POST', body: JSON.stringify({ status: 'acknowledged' }) });
+  if (ack.status !== 'acknowledged') throw new Error('Command ack failed');
+  const pkg = await request('/api/access-duration-packages', { method: 'POST', body: JSON.stringify({ name: 'Smoke Package', duration_minutes: 45 }) });
+  const updatedPkg = await request(`/api/access-duration-packages/${pkg.id}`, { method: 'PATCH', body: JSON.stringify({ duration_minutes: 50 }) });
+  if (updatedPkg.duration_minutes !== 50) throw new Error('Package update failed');
+  await request(`/api/access-duration-packages/${pkg.id}`, { method: 'DELETE' });
   const username = `smoke${Date.now()}`;
   await request('/api/users', { method: 'POST', body: JSON.stringify({ username, password: '123456', user_type: 'member', default_duration_minutes: 30 }) });
   const topup = await request(`/api/users/${username}/topup`, { method: 'POST', body: JSON.stringify({ minutes: 15 }) });
@@ -59,6 +70,17 @@ try {
   const finalSession = await request('/api/sessions/start', { method: 'POST', body: JSON.stringify({ username, password: '123456', computer_code: computer.code, duration_minutes: remainingBalance }) });
   await request(`/api/sessions/${finalSession.id}/expire`, { method: 'POST', body: JSON.stringify({ note: 'Smoke expire all remaining balance' }) });
   await requestExpectError('/api/sessions/start', 403, { method: 'POST', body: JSON.stringify({ username, password: '123456', computer_code: computer.code }) });
+  const resetUser = `reset${Date.now()}`;
+  await request('/api/users', { method: 'POST', body: JSON.stringify({ username: resetUser, password: 'oldpass', user_type: 'member', default_duration_minutes: 10 }) });
+  await request(`/api/users/${resetUser}/reset-password`, { method: 'POST', body: JSON.stringify({ password: 'newpass' }) });
+  await request('/api/users/validate-login', { method: 'POST', body: JSON.stringify({ username: resetUser, password: 'newpass' }) });
+  await request(`/api/users/${resetUser}/disable`, { method: 'POST', body: JSON.stringify({ note: 'Smoke disable' }) });
+  await requestExpectError('/api/users/validate-login', 403, { method: 'POST', body: JSON.stringify({ username: resetUser, password: 'newpass' }) });
+  const guestUser = `guest${Date.now()}`;
+  await request('/api/users', { method: 'POST', body: JSON.stringify({ username: guestUser, password: '123456', user_type: 'one_time', default_duration_minutes: 5 }) });
+  const guestSession = await request('/api/sessions/start', { method: 'POST', body: JSON.stringify({ username: guestUser, password: '123456', computer_code: computer.code, duration_minutes: 5 }) });
+  await request(`/api/sessions/${guestSession.id}/stop`, { method: 'POST', body: JSON.stringify({ note: 'Smoke one-time stop' }) });
+  await requestExpectError(`/api/users/${guestUser}/topup`, 409, { method: 'POST', body: JSON.stringify({ minutes: 5 }) });
   await request('/api/sessions/active');
   await request('/api/reports/daily');
   console.log('SMOKE_OK');

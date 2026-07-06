@@ -1,9 +1,10 @@
 export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3478';
 
 export async function api(path, options = {}) {
+  const headers = options.body ? { 'content-type': 'application/json', ...(options.headers ?? {}) } : options.headers;
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'content-type': 'application/json' },
-    ...options
+    ...options,
+    headers
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
@@ -14,3 +15,4 @@ export async function api(path, options = {}) {
 export const getJson = (path) => api(path);
 export const postJson = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
 export const patchJson = (path, body) => api(path, { method: 'PATCH', body: JSON.stringify(body) });
+export const deleteJson = (path) => api(path, { method: 'DELETE' });
