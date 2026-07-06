@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { COMPUTER_CODE, getApiBase, postJson, setApiBase } from './api.js';
+import { COMPUTER_CODE, getApiBase, getJson, postJson, setApiBase } from './api.js';
 import './styles.css';
 
 function App() {
@@ -17,6 +17,13 @@ function App() {
   const [shutdownWarning, setShutdownWarning] = useState(false);
   const [shutdownSeconds, setShutdownSeconds] = useState(60);
   const [remoteCommand, setRemoteCommand] = useState(null);
+  const [settings, setSettings] = useState({
+    business_name: 'Perpustakaan Daerah',
+    default_expire_action: 'shutdown',
+    heartbeat_interval_seconds: '5',
+    shutdown_warning_seconds: '60'
+  });
+  const [expireAction, setExpireAction] = useState('shutdown');
   const [now, setNow] = useState(Date.now());
 
   const remainingSeconds = useMemo(() => {
@@ -33,7 +40,8 @@ function App() {
     let cancelled = false;
     async function heartbeat() {
       try {
-        const data = await postJson(`/api/computers/${computerCode}/heartbeat`, { clientVersion: 'web-prototype-0.2.0' });
+        await loadSettings();
+        const data = await postJson(`/api/computers/${computerCode}/heartbeat`, { clientVersion: 'web-prototype-0.4.0' });
         if (cancelled) return;
         setServerOnline(true);
         setConfigured(true);
@@ -53,12 +61,13 @@ function App() {
       }
     }
     heartbeat();
-    const timer = setInterval(heartbeat, 5000);
+    const intervalMs = Math.max(1000, Number(settings.heartbeat_interval_seconds ?? 5) * 1000);
+    const timer = setInterval(heartbeat, intervalMs);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [computerCode, session?.id, shutdownWarning]);
+  }, [computerCode, session?.id, shutdownWarning, settings.heartbeat_interval_seconds]);
 
   useEffect(() => {
     let ws;
@@ -68,6 +77,10 @@ function App() {
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         const payload = msg.payload;
+        if (msg.type === 'settings.updated') {
+          loadSettings();
+          return;
+        }
         if (!payload || payload.computer_code !== computerCode) return;
         if (msg.type === 'client.command') {
           handleRemoteCommand(payload);
@@ -99,14 +112,14 @@ function App() {
       setShutdownSeconds((value) => {
         if (value <= 1) {
           clearInterval(timer);
-          resetToLock('Simulasi shutdown selesai. Komputer kembali terkunci. Hubungi operator untuk isi ulang waktu.');
+          resetToLock(`Simulasi ${actionLabel(expireAction)} selesai. Komputer kembali terkunci. Hubungi operator untuk isi ulang waktu.`);
           return 0;
         }
         return value - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [shutdownWarning]);
+  }, [shutdownWarning, expireAction]);
 
   async function saveConfiguration(event) {
     event.preventDefault();
@@ -122,7 +135,8 @@ function App() {
     setServerUrl(normalizedUrl);
     setComputerCode(normalizedCode);
     try {
-      const data = await postJson(`/api/computers/${encodeURIComponent(normalizedCode)}/heartbeat`, { clientVersion: 'web-prototype-0.3.0' });
+      await loadSettings();
+      const data = await postJson(`/api/computers/${encodeURIComponent(normalizedCode)}/heartbeat`, { clientVersion: 'web-prototype-0.4.0' });
       setConfigured(true);
       setServerOnline(true);
       setConfigurationOpen(false);
@@ -151,11 +165,28 @@ function App() {
     }
   }
 
+  async function loadSettings() {
+    const data = await getJson('/api/settings');
+    setSettings((prev) => ({ ...prev, ...data }));
+    return data;
+  }
+
+  function warningSeconds(currentSettings = settings) {
+    const value = Number(currentSettings.shutdown_warning_seconds ?? 60);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 60;
+  }
+
+  function actionLabel(action = expireAction) {
+    const labels = { lock: 'dikunci', shutdown: 'shutdown', restart: 'restart' };
+    return labels[action] ?? action;
+  }
+
   function applyActiveSession(activeSession, nextMessage) {
     setSession(activeSession);
     setUsername(activeSession.username ?? username);
     setShutdownWarning(false);
-    setShutdownSeconds(60);
+    setShutdownSeconds(warningSeconds());
+    setExpireAction(settings.default_expire_action ?? 'shutdown');
     setError('');
     setMessage(nextMessage);
   }
@@ -177,10 +208,10 @@ function App() {
       resetToLock('Komputer dikunci oleh operator.');
     }
     if (command.command === 'shutdown') {
-      triggerShutdownWarning('Command shutdown diterima dari operator.');
+      triggerExpireAction('shutdown', 'Command shutdown diterima dari operator.');
     }
     if (command.command === 'restart') {
-      triggerShutdownWarning('Command restart diterima. Prototype menampilkan simulasi restart/shutdown.');
+      triggerExpireAction('restart', 'Command restart diterima. Prototype menampilkan simulasi restart.');
     }
     try {
       await postJson(`/api/client-commands/${command.id}/ack`, { status: 'acknowledged', note: 'Handled by web prototype client' });
@@ -190,17 +221,26 @@ function App() {
   function resetToLock(nextMessage) {
     setSession(null);
     setShutdownWarning(false);
-    setShutdownSeconds(60);
+    setShutdownSeconds(warningSeconds());
     setUsername('');
     setPassword('');
     setRemoteCommand(null);
     setMessage(nextMessage);
   }
 
-  function triggerShutdownWarning(nextMessage = 'Waktu habis. Komputer akan shutdown.') {
+  function triggerShutdownWarning(nextMessage) {
+    triggerExpireAction(settings.default_expire_action ?? 'shutdown', nextMessage);
+  }
+
+  function triggerExpireAction(action, nextMessage) {
+    setExpireAction(action);
+    if (action === 'lock') {
+      resetToLock(nextMessage ?? 'Waktu habis. Komputer kembali terkunci.');
+      return;
+    }
     setShutdownWarning(true);
-    setShutdownSeconds(60);
-    setMessage(nextMessage);
+    setShutdownSeconds(warningSeconds());
+    setMessage(nextMessage ?? `Waktu habis. Komputer akan ${actionLabel(action)}.`);
   }
 
   return (
@@ -209,7 +249,7 @@ function App() {
         <div className="brand">
           <span className={serverOnline ? 'status online' : 'status offline'} />
           <div>
-            <p>Perpus Billing Client</p>
+            <p>{settings.business_name ?? 'Perpus Billing Client'}</p>
             <h1>{computerCode}</h1>
           </div>
         </div>
@@ -232,7 +272,7 @@ function App() {
         {!session && configured && !configurationOpen && (
           <form className="card" onSubmit={login}>
             <p className="kicker">LOCK SCREEN</p>
-            <h2>Akses Komputer Perpustakaan</h2>
+            <h2>Akses Komputer {settings.business_name ?? 'Perpustakaan'}</h2>
             <p className="muted">Masukkan username dan password dari operator.</p>
             <div className="client-identity"><span>{computerCode}</span><button type="button" onClick={() => setConfigurationOpen(true)}>Pengaturan</button></div>
             <label>Username</label>
@@ -260,7 +300,7 @@ function App() {
             <h2>Waktu penggunaan habis</h2>
             <div className="shutdown-icon">⏻</div>
             <div className="shutdown-countdown">{shutdownSeconds}</div>
-            <p>{remoteCommand ? `Simulasi command ${remoteCommand.command}. ` : ''}Di Windows final, agent akan menjalankan aksi OS otomatis.</p>
+            <p>{remoteCommand ? `Simulasi command ${remoteCommand.command}. ` : `Aksi default: ${actionLabel(expireAction)}. `}Di Windows final, agent akan menjalankan aksi OS otomatis.</p>
             <button onClick={() => resetToLock('Komputer kembali terkunci. Hubungi operator untuk isi ulang waktu.')}>Kembali ke lock screen</button>
           </div>
         )}

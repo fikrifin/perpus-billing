@@ -11,13 +11,15 @@ export function setApiBase(value) {
 }
 
 export async function api(path, options = {}) {
+  const headers = options.body ? { 'content-type': 'application/json', ...(options.headers ?? {}) } : options.headers;
   const res = await fetch(`${getApiBase()}${path}`, {
-    headers: { 'content-type': 'application/json' },
-    ...options
+    ...options,
+    headers
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error(data?.error ?? `Request gagal: ${res.status}`);
   return data;
 }
+export const getJson = (path) => api(path);
 export const postJson = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
