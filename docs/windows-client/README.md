@@ -60,12 +60,14 @@ Contoh untuk LAN:
   "serverUrl": "http://192.168.1.10:3478",
   "computerCode": "PC-01",
   "clientVersion": "windows-client-0.1.0",
-  "heartbeatFallbackSeconds": 5
+  "heartbeatFallbackSeconds": 5,
+  "autoStartOnLogin": true
 }
 ```
 
 - `serverUrl`: IP PC operator/server.
 - `computerCode`: kode komputer sesuai dashboard admin, misal `PC-01`.
+- `autoStartOnLogin`: jika `true`, app akan best-effort mendaftarkan dirinya ke startup user Windows saat app dijalankan. Karena registrasinya via `HKCU`, behavior ini bersifat per-user, bukan global semua akun Windows.
 
 ## Build
 
@@ -94,8 +96,9 @@ dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Relea
 3. Edit `appsettings.json` agar `serverUrl` mengarah ke IP server.
 4. Jalankan `PerpusBilling.WindowsClient.exe`.
 5. Pastikan status server berubah online dan PC muncul heartbeat di dashboard.
-6. Login memakai user demo atau user yang dibuat operator.
-7. Test command dari dashboard:
+6. Kalau `autoStartOnLogin=true`, tutup-buka/login ulang Windows lalu cek app muncul otomatis.
+7. Login memakai user demo atau user yang dibuat operator.
+8. Test command dari dashboard:
    - lock
    - restart
    - shutdown
@@ -108,6 +111,8 @@ dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Relea
 - Window dibuat fullscreen/topmost sebagai lock screen dasar. Saat user sudah login, warning akhir diarahkan tetap di mini top bar agar tidak terlalu mengganggu aktivitas user.
 - Mini bar menyediakan tombol keluar cepat. Saat ditekan, user diminta konfirmasi dulu. Jika dikonfirmasi, client akan stop session ke server dulu agar waktu/user state tersimpan, lalu komputer shutdown.
 - Pada mode belum-login sekarang ditambah hardening ringan: best-effort tahan minimize, tahan close normal, re-activate window saat kehilangan fokus, dan blok shortcut dasar seperti `Alt+F4`.
+- App juga bisa best-effort mendaftarkan auto-start di registry `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` jika `autoStartOnLogin=true`.
+- Karena auto-start ini per-user, registrasi awal sebaiknya dilakukan dari akun `PerpusClient`, bukan `PerpusAdmin`.
 - Ini belum hardening kiosk penuh.
 
 ## Hardening Berikutnya

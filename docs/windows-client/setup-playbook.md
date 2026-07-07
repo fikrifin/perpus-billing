@@ -119,6 +119,21 @@ Lalu copy hasil publish ke PC client, misalnya ke:
 C:\PerpusBilling\Client\
 ```
 
+### Penting: install dilakukan dari akun admin, tapi startup diregister dari akun client
+
+Pisahkan dua tahap ini dengan jelas:
+
+1. **Login sebagai `PerpusAdmin`**
+   - copy/publish file app
+   - edit konfigurasi
+   - siapkan policy Windows bila perlu
+2. **Login sebagai `PerpusClient`**
+   - jalankan app minimal sekali
+   - biarkan app mendaftarkan auto-start untuk profile user ini
+   - verifikasi auto-start dengan sign out / logon ulang
+
+Jangan anggap auto-start ini global untuk semua akun. Untuk implementasi saat ini, auto-start bersifat **per-user**.
+
 ---
 
 ## Langkah 4 — Isi Konfigurasi Client
@@ -132,7 +147,8 @@ Contoh:
   "serverUrl": "http://192.168.1.10:3478",
   "computerCode": "PC-01",
   "clientVersion": "0.1.0-windows",
-  "heartbeatFallbackSeconds": 5
+  "heartbeatFallbackSeconds": 5,
+  "autoStartOnLogin": true
 }
 ```
 
@@ -166,10 +182,37 @@ Bisa pakai salah satu:
 2. registry `Run`
 3. Task Scheduler saat logon
 
+### Status implementasi saat ini
+Windows client sekarang punya best-effort auto-start internal via registry:
+
+- `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`
+- aktif jika `autoStartOnLogin=true` di `appsettings.json`
+- didaftarkan saat app dijalankan di akun target
+- **hanya berlaku untuk user Windows yang sedang login saat registrasi dilakukan**
+
+Karena pakai `HKCU` (`HKEY_CURRENT_USER`), startup ini **bukan global semua user**.
+
+Contoh:
+- kalau app pertama kali dijalankan di akun `PerpusClient`, maka auto-start menempel ke `PerpusClient`
+- kalau app dijalankan di akun `PerpusAdmin`, maka auto-start bisa menempel ke akun admin juga
+
+Karena itu, registrasi startup **harus** dilakukan dari akun `PerpusClient`.
+
 ### Rekomendasi awal
 Untuk MVP/pilot awal, paling simpel:
 
-- pakai `Startup` folder atau Task Scheduler saat logon user `PerpusClient`
+- login dulu ke akun `PerpusClient`
+- jalankan app sekali di akun itu
+- biarkan app mendaftarkan auto-start registry
+- verifikasi hasilnya dengan sign out / logon ulang `PerpusClient`
+
+Jangan mendaftarkan startup pertama kali dari akun `PerpusAdmin`, karena nanti app bisa ikut jalan saat admin maintenance.
+
+### Fallback kalau perlu
+Kalau registry Run tidak cukup atau diblok policy:
+
+- pakai `Startup` folder
+- atau Task Scheduler saat logon user `PerpusClient`
 
 ### Hasil yang diinginkan
 Setelah restart PC:
@@ -283,12 +326,20 @@ Untuk maintenance, petugas harus punya SOP sederhana.
 
 Contoh alur:
 
-1. masuk ke akun `PerpusAdmin`
-2. update aplikasi/config
-3. tes koneksi backend
-4. logout dari admin
-5. kembali ke flow `PerpusClient`
-6. pastikan auto-run tetap jalan
+1. sign out / keluar dari flow `PerpusClient`
+2. login ke akun `PerpusAdmin`
+3. update aplikasi/config
+4. tes koneksi backend bila perlu
+5. logout dari admin
+6. kembali login / auto-login ke `PerpusClient`
+7. pastikan app auto-run tetap jalan di akun `PerpusClient`
+
+### Catatan penting untuk maintenance
+
+- auto-start saat ini bersifat **per-user**
+- target operasional harian adalah `PerpusClient`
+- `PerpusAdmin` dipakai hanya saat maintenance
+- kalau app sempat terdaftar auto-start di akun admin, bersihkan/disable lalu registrasikan ulang dari `PerpusClient`
 
 Ini penting supaya maintenance tidak merusak flow kiosk/client.
 

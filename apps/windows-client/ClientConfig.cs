@@ -9,6 +9,7 @@ public sealed record ClientConfig
     public string ComputerCode { get; init; } = "PC-01";
     public string ClientVersion { get; init; } = "windows-client-0.1.0";
     public int HeartbeatFallbackSeconds { get; init; } = 5;
+    public bool AutoStartOnLogin { get; init; } = true;
 
     public static string ConfigPath => Path.Combine(AppContext.BaseDirectory, "appsettings.json");
 
@@ -31,7 +32,8 @@ public sealed record ClientConfig
             ServerUrl = string.IsNullOrWhiteSpace(config.ServerUrl) ? "http://localhost:3478" : config.ServerUrl.TrimEnd('/'),
             ComputerCode = string.IsNullOrWhiteSpace(config.ComputerCode) ? "PC-01" : config.ComputerCode.Trim().ToUpperInvariant(),
             ClientVersion = string.IsNullOrWhiteSpace(config.ClientVersion) ? "windows-client-0.1.0" : config.ClientVersion,
-            HeartbeatFallbackSeconds = config.HeartbeatFallbackSeconds <= 0 ? 5 : config.HeartbeatFallbackSeconds
+            HeartbeatFallbackSeconds = config.HeartbeatFallbackSeconds <= 0 ? 5 : config.HeartbeatFallbackSeconds,
+            AutoStartOnLogin = config.AutoStartOnLogin
         };
     }
 

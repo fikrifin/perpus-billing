@@ -39,6 +39,7 @@ Karakteristik:
 
 - auto-login saat boot
 - auto-start aplikasi Perpus Billing
+- auto-start diregister dari profile user ini
 - tidak punya hak admin
 - dibatasi semaksimal mungkin dari system tools
 
@@ -153,6 +154,18 @@ PerpusAdmin (administrator)
 3. aplikasi Perpus Billing auto-run
 4. lock screen client tampil
 
+### Catatan tentang auto-start
+Auto-start yang sekarang dipakai client berjalan via registry user:
+
+- `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`
+- artinya sifatnya **per-user**, bukan global semua akun Windows
+
+Implikasinya:
+
+- `PerpusClient` harus jadi akun tempat startup diregister
+- `PerpusAdmin` tidak perlu ikut punya auto-start
+- proses registrasi startup harus diuji dari akun `PerpusClient`
+
 ### Saat user perpustakaan datang
 1. user memasukkan akun perpustakaan di app client
 2. session aktif dari server
@@ -168,7 +181,18 @@ PerpusAdmin (administrator)
 1. petugas keluar dari mode operasional
 2. login ke `PerpusAdmin`
 3. lakukan update/perbaikan
-4. kembali ke flow `PerpusClient`
+4. logout dari admin
+5. kembali ke flow `PerpusClient`
+
+### Flow instalasi awal yang direkomendasikan
+1. login ke `PerpusAdmin`
+2. install/copy publish hasil build
+3. edit `appsettings.json`
+4. setup policy dasar bila perlu
+5. logout dari admin
+6. login ke `PerpusClient`
+7. jalankan app sekali agar auto-start terdaftar di akun client
+8. sign out / logon ulang `PerpusClient` untuk verifikasi
 
 ---
 
