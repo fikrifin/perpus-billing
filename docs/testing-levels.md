@@ -324,7 +324,181 @@ Bisa pakai:
 - Parallels Desktop
 - VMware Fusion
 
-Tapi untuk validasi final, perangkat fisik Windows tetap lebih bagus.
+Kalau kamu mau pakai **UTM + Windows 11**, itu cukup bagus untuk test awal heartbeat, login, countdown, dan flow session. Tapi untuk test shutdown/restart final, perangkat fisik Windows tetap lebih valid.
+
+### Panduan UTM + Windows 11 di Mac
+
+#### 1. Siapkan Bahan
+
+Yang kamu butuhkan:
+
+- UTM terinstall di Mac
+- Image/ISO Windows 11
+- koneksi internet untuk setup awal Windows
+- repo project Perpus Billing di Mac
+
+Kalau Mac kamu Apple Silicon, paling aman pakai image **Windows 11 ARM**.
+
+#### 2. Buat VM di UTM
+
+Di UTM:
+
+1. Klik **Create a New Virtual Machine**
+2. Pilih **Virtualize** kalau tersedia untuk Windows ARM
+3. Pilih image Windows 11
+4. Alokasi minimal yang aman untuk testing:
+   - RAM: **8 GB** kalau memungkinkan
+   - CPU: **4 core**
+   - Storage: **64 GB** atau lebih
+5. Aktifkan network default NAT dulu
+6. Selesaikan wizard dan boot VM
+
+#### 3. Install Windows 11
+
+Selesaikan setup Windows sampai masuk desktop.
+
+Setelah itu install tool yang diperlukan di dalam VM:
+
+- .NET SDK 8
+- Git (opsional tapi enak)
+- Node.js (opsional, hanya kalau mau run bagian web/admin di VM juga)
+
+Minimal untuk Windows client native, yang wajib hanya:
+
+- .NET SDK 8
+
+Cek di PowerShell:
+
+```powershell
+dotnet --version
+```
+
+#### 4. Pastikan VM Bisa Akses Backend di Mac
+
+Di Mac, jalankan backend:
+
+```bash
+cd /Users/kominfo/Documents/Fikri/Project/perpus-billing
+npm run dev:server
+```
+
+Cari IP lokal Mac:
+
+```bash
+ipconfig getifaddr en0
+```
+
+Contoh hasil:
+
+```text
+192.168.1.20
+```
+
+Di Windows VM, buka browser lalu test:
+
+```text
+http://192.168.1.20:3478/health
+```
+
+Kalau berhasil, berarti VM bisa reach backend di Mac.
+
+Kalau gagal:
+
+- pastikan Mac dan VM network-nya saling tembus
+- tetap jalankan backend di `0.0.0.0`
+- cek firewall macOS kalau perlu
+- kalau NAT UTM susah reach host, pertimbangkan ganti ke **bridged/shared network** yang bikin VM lebih mudah akses host/LAN
+
+#### 5. Bawa Project ke Windows VM
+
+Pilih salah satu cara:
+
+##### Opsi A — Shared Folder UTM
+
+Mount folder project dari Mac ke Windows VM supaya langsung akses source yang sama.
+
+##### Opsi B — Git Clone di VM
+
+Clone repo langsung di Windows VM.
+
+##### Opsi C — Copy Manual
+
+Zip project lalu copy ke VM.
+
+Untuk awal, **shared folder** paling praktis.
+
+#### 6. Edit Konfigurasi Windows Client
+
+Di VM, edit file:
+
+```text
+apps/windows-client/appsettings.json
+```
+
+Isi contoh:
+
+```json
+{
+  "serverUrl": "http://192.168.1.20:3478",
+  "computerCode": "PC-01",
+  "clientVersion": "windows-client-0.1.0",
+  "heartbeatFallbackSeconds": 5
+}
+```
+
+#### 7. Build Windows Client
+
+Di PowerShell dalam VM:
+
+```powershell
+dotnet build .\apps\windows-client\PerpusBilling.WindowsClient.csproj
+```
+
+Kalau sukses, jalankan:
+
+```powershell
+dotnet run --project .\apps\windows-client\PerpusBilling.WindowsClient.csproj
+```
+
+#### 8. Jalankan Skenario Test Utama
+
+Test minimal yang disarankan di UTM:
+
+- heartbeat ke backend
+- login user
+- countdown session
+- stop session
+- command lock
+
+Test yang **boleh**, tapi hati-hati:
+
+- command shutdown
+- command restart
+
+Karena di VM, shutdown/restart bisa memutus sesi test. Jadi mending simpan state dulu sebelum uji command itu.
+
+#### 9. Rekomendasi Praktis Saat Test di UTM
+
+- Pakai `PC-99` atau kode khusus VM supaya tidak bentrok dengan test lain
+- Test `lock` dulu sebelum `shutdown/restart`
+- Jalankan admin dashboard tetap dari Mac supaya lebih gampang monitor
+- Kalau UTM terasa berat, matikan app Mac lain yang tidak penting
+
+#### 10. Kapan UTM Cukup, Kapan Harus Windows Fisik
+
+**UTM cukup untuk:**
+
+- validasi build jalan atau tidak
+- validasi UI WPF muncul
+- validasi heartbeat/login/session flow
+- validasi kontrak API client native
+
+**Windows fisik tetap dibutuhkan untuk:**
+
+- validasi auto-start saat boot
+- validasi kiosk/lock real user environment
+- validasi shutdown/restart di perangkat nyata
+- validasi behavior performa di PC perpustakaan sebenarnya
 
 ### Persiapan di Mac
 
