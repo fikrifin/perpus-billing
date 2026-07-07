@@ -36,7 +36,10 @@ perpus-billing/
 ├── packages/
 │   └── shared/
 ├── docs/
-│   └── setup.md
+│   ├── blueprint-roadmap.md
+│   ├── setup.md
+│   ├── testing-levels.md
+│   └── windows-client/
 └── scripts/
 ```
 
@@ -112,6 +115,13 @@ Ringkasnya:
 5. Pastikan heartbeat client muncul online/idle.
 6. Test login user, session countdown, extend/top-up, stop, expired shutdown, backup DB, dan export CSV.
 
+## Dokumentasi Penting
+
+- Setup LAN MVP: [`docs/setup.md`](docs/setup.md)
+- Testing bertingkat: [`docs/testing-levels.md`](docs/testing-levels.md)
+- Blueprint & roadmap reusable: [`docs/blueprint-roadmap.md`](docs/blueprint-roadmap.md)
+- Windows client native: [`docs/windows-client/README.md`](docs/windows-client/README.md)
+
 ## Next Phase
 
 Backend/admin sudah cukup untuk lanjut ke **Windows client agent native**. Skeleton awal tersedia di [`apps/windows-client`](apps/windows-client), dengan dokumentasi build/run di [`docs/windows-client/README.md`](docs/windows-client/README.md).
@@ -123,3 +133,9 @@ Target Windows client:
 - Command Windows nyata untuk lock/restart/shutdown.
 - Pairing sederhana: server URL + computer code.
 - Berikutnya: auto-start/service, installer, dan kiosk hardening.
+
+Progress terbaru di native client:
+
+- skeleton WPF/.NET 8 sudah jalan
+- validasi awal berhasil di UTM + Windows 11
+- Sprint 1 mulai mengubah flow countdown agar 60 detik terakhir tampil sebelum waktu habis, lalu aksi akhir jalan tepat saat waktu mencapai `00:00`
