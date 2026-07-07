@@ -31,7 +31,8 @@ perpus-billing/
 ├── apps/
 │   ├── admin-desktop/
 │   ├── backend-server/
-│   └── client-agent/
+│   ├── client-agent/
+│   └── windows-client/
 ├── packages/
 │   └── shared/
 ├── docs/
@@ -113,9 +114,12 @@ Ringkasnya:
 
 ## Next Phase
 
-Backend/admin sudah cukup untuk lanjut ke **Windows client agent native**:
+Backend/admin sudah cukup untuk lanjut ke **Windows client agent native**. Skeleton awal tersedia di [`apps/windows-client`](apps/windows-client), dengan dokumentasi build/run di [`docs/windows-client/README.md`](docs/windows-client/README.md).
 
-- .NET Worker Service untuk auto-start dan heartbeat.
-- WPF/WinUI lock/login/countdown screen.
+Target Windows client:
+
+- WPF lock/login/countdown screen.
+- Heartbeat ke backend.
 - Command Windows nyata untuk lock/restart/shutdown.
 - Pairing sederhana: server URL + computer code.
+- Berikutnya: auto-start/service, installer, dan kiosk hardening.
