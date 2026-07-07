@@ -25,6 +25,7 @@ function App() {
   const [users, setUsers] = useState([]);
   const [packages, setPackages] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [reportDate, setReportDate] = useState(todayInputDate());
   const [report, setReport] = useState(null);
   const [logs, setLogs] = useState([]);
   const [serverOk, setServerOk] = useState(false);
@@ -59,7 +60,7 @@ function App() {
         getJson('/api/users'),
         getJson('/api/access-duration-packages'),
         getJson('/api/sessions/active'),
-        getJson('/api/reports/daily'),
+        getJson(`/api/reports/daily?date=${encodeURIComponent(reportDate)}`),
         getJson('/api/reports/usage-logs'),
         getJson('/api/settings')
       ]);
@@ -82,7 +83,7 @@ function App() {
     loadAll();
     const timer = setInterval(loadAll, 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [reportDate]);
 
   useEffect(() => {
     let ws;
@@ -271,6 +272,38 @@ function App() {
       : `${pc.code} siap. Pilih user aktif di form Mulai Session atau klik Pakai di tabel User.`);
   }
 
+  function exportDailyReport() {
+    const rows = report?.sessions ?? [];
+    if (!rows.length) {
+      setNotice('Belum ada session pada tanggal laporan ini.');
+      return;
+    }
+    const headers = ['Tanggal', 'User', 'Nama', 'PC', 'Mulai', 'Selesai', 'Durasi Menit', 'Extend Menit', 'Status', 'Catatan'];
+    const csvRows = [headers, ...rows.map((session) => [
+      report.date,
+      session.username,
+      session.full_name ?? '',
+      session.computer_code,
+      session.start_time,
+      session.end_time,
+      session.duration_minutes,
+      session.extended_minutes,
+      session.status,
+      session.usage_note ?? ''
+    ])];
+    const csv = csvRows.map((row) => row.map(csvCell).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `laporan-perpus-${report.date}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setNotice(`Laporan ${report.date} diexport ke CSV`);
+  }
+
   return (
     <main>
       <header className="hero">
@@ -439,7 +472,19 @@ function App() {
 
       {activeTab === 'reports' && (
         <section className="layout single">
-          <Panel title="Riwayat Aktivitas" wide>
+          <Panel title="Laporan Harian" subtitle="Pilih tanggal untuk melihat rekap pemakaian dan export CSV." wide>
+            <div className="report-toolbar">
+              <label>Tanggal Laporan<input type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value || todayInputDate())} /></label>
+              <button className="secondary" onClick={exportDailyReport}>Export CSV</button>
+            </div>
+            <div className="report-cards">
+              <Card title="Tanggal" value={report?.date ?? reportDate} />
+              <Card title="Total Session" value={report?.total_sessions ?? 0} />
+              <Card title="Total Durasi" value={`${report?.total_duration_minutes ?? 0} menit`} />
+            </div>
+            <Table headers={['User', 'Nama', 'PC', 'Mulai', 'Selesai', 'Durasi', 'Status', 'Catatan']} rows={(report?.sessions ?? []).map((session) => [session.username, session.full_name ?? '-', session.computer_code, formatTime(session.start_time), formatTime(session.end_time), `${Number(session.duration_minutes ?? 0) + Number(session.extended_minutes ?? 0)} menit`, <StatusPill status={session.status} />, session.usage_note ?? '-'])} />
+          </Panel>
+          <Panel title="Riwayat Aktivitas" subtitle="500 aktivitas terbaru dari sistem." wide>
             <Table headers={['Waktu', 'User', 'PC', 'Aksi', 'Catatan']} rows={logs.slice(0, 20).map((log) => [formatTime(log.created_at), log.username ?? '-', log.computer_code ?? '-', humanAction(log.action), log.note ?? '-'])} />
           </Panel>
         </section>
@@ -454,6 +499,11 @@ function Panel({ title, subtitle, wide, children }) {
 function Card({ title, value }) { return <div className="stat-card"><span>{title}</span><strong>{value}</strong></div>; }
 function Table({ headers, rows }) {
   return <div className="table-wrap"><table><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>) : <tr><td colSpan={headers.length} className="empty">Belum ada data</td></tr>}</tbody></table></div>;
+}
+function todayInputDate() { return new Date().toISOString().slice(0, 10); }
+function csvCell(value) {
+  const text = String(value ?? '');
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 function formatTime(value) { return value ? new Date(value).toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }) : '-'; }
 function formatRemaining(endTime) {
