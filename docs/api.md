@@ -2,7 +2,7 @@
 
 Base URL default: `http://localhost:3478`
 
-Semua request body memakai JSON. Auth/token belum final; login operator saat ini masih prototype development.
+Semua request body memakai JSON. Untuk MVP saat ini, route admin/operator memakai Bearer token, sementara beberapa route client tetap public agar Windows client bisa jalan langsung.
 
 ## Health
 
@@ -361,11 +361,12 @@ Body:
 
 Stop session manual. Untuk member, sisa waktu bisa refund kecuali `consume_remaining: true`. Untuk one-time, sisa waktu tidak refund.
 
+Untuk MVP saat ini route ini juga dipakai langsung oleh Windows client, jadi tetap public agar client bisa menyimpan status session tanpa login operator.
+
 Body:
 
 ```json
 {
-  "operator_id": 1,
   "note": "Stopped from dashboard",
   "consume_remaining": false
 }

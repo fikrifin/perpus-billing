@@ -9,6 +9,8 @@ public partial class MiniBarWindow : Window
     private readonly DispatcherTimer _blinkTimer = new();
     private bool _blinkOn;
 
+    public event EventHandler? ExitRequested;
+
     public MiniBarWindow()
     {
         InitializeComponent();
@@ -25,6 +27,7 @@ public partial class MiniBarWindow : Window
         MiniTitleText.Text = computerCode;
         MiniRemainingText.Text = remainingText;
         RootBorder.ToolTip = $"{username} · {computerCode}";
+        MiniExitButton.ToolTip = $"Akhiri session {username}";
         PositionAtTopCenter();
     }
 
@@ -33,6 +36,7 @@ public partial class MiniBarWindow : Window
         MiniTitleText.Text = action == "restart" ? $"{computerCode} · restart" : $"{computerCode} · shutdown";
         MiniRemainingText.Text = remainingText;
         RootBorder.ToolTip = $"{username} · {computerCode}";
+        MiniExitButton.ToolTip = $"Akhiri session {username}";
         if (!_blinkTimer.IsEnabled)
         {
             _blinkOn = false;
@@ -51,13 +55,21 @@ public partial class MiniBarWindow : Window
         StatusDot.Background = Brush("#36C98A");
         MiniTitleText.Foreground = Brush("#D7F5E4");
         MiniRemainingText.Foreground = Brushes.White;
+        MiniExitButton.Background = Brush("#22FFFFFF");
+        MiniExitButton.Foreground = Brushes.White;
+        MiniExitButton.BorderBrush = Brush("#33FFFFFF");
     }
 
     public void PositionAtTopCenter()
     {
         var area = SystemParameters.WorkArea;
         Left = area.Left + (area.Width - Width) / 2;
-        Top = area.Top + 10;
+        Top = area.Top + 8;
+    }
+
+    private void MiniExitButton_Click(object sender, RoutedEventArgs e)
+    {
+        ExitRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void ToggleBlink()
@@ -70,6 +82,9 @@ public partial class MiniBarWindow : Window
             StatusDot.Background = Brush("#F59E0B");
             MiniTitleText.Foreground = Brush("#7A4B00");
             MiniRemainingText.Foreground = Brush("#7A4B00");
+            MiniExitButton.Background = Brush("#33F59E0B");
+            MiniExitButton.Foreground = Brush("#7A4B00");
+            MiniExitButton.BorderBrush = Brush("#66F59E0B");
         }
         else
         {
@@ -78,6 +93,9 @@ public partial class MiniBarWindow : Window
             StatusDot.Background = Brush("#D92D20");
             MiniTitleText.Foreground = Brush("#912018");
             MiniRemainingText.Foreground = Brush("#912018");
+            MiniExitButton.Background = Brush("#33D92D20");
+            MiniExitButton.Foreground = Brush("#912018");
+            MiniExitButton.BorderBrush = Brush("#66D92D20");
         }
     }
 

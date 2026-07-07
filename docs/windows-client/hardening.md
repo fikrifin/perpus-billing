@@ -52,6 +52,7 @@ Sudah ada implementasi dasar:
 - blok shortcut dasar seperti `Alt+F4` pada mode belum-login
 - saat session aktif, main window di-hide
 - mini top bar always-on-top
+- mini bar punya tombol keluar cepat, tapi tetap pakai konfirmasi dulu sebelum stop session + shutdown
 - warning countdown tetap di mini bar
 
 ### Keterbatasan

@@ -21,7 +21,8 @@ const PUBLIC_ROUTES = [
   ['POST', /^\/api\/computers\/[^/]+\/heartbeat$/],
   ['POST', /^\/api\/client-commands\/[^/]+\/ack$/],
   ['POST', '/api/users/validate-login'],
-  ['POST', '/api/sessions/start']
+  ['POST', '/api/sessions/start'],
+  ['POST', /^\/api\/sessions\/[^/]+\/stop$/]
 ];
 
 function isPublicRoute(method, url) {

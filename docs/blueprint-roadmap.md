@@ -532,7 +532,7 @@ Bukan lagi tahap proof-of-concept murni.
 
 ### Status
 - sprint ini mulai diarahkan
-- mini bar sudah diperkecil ke mode lebih minimal
+- mini bar sudah diperkecil ke mode lebih minimal, lalu diperkecil lagi dan ditambah tombol keluar cepat dengan konfirmasi
 - hardening ringan app-level mulai ditambahkan untuk mode belum-login (tahan minimize/close dasar, re-activate saat kehilangan fokus, blok shortcut dasar)
 - dokumentasi hardening Windows sudah mulai dipisah agar nanti bisa dipakai sebagai checklist deployment
 ---

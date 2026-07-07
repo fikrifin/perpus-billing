@@ -39,6 +39,7 @@ public partial class MainWindow : Window
         _clockTimer.Tick += (_, _) => RefreshSessionClock();
         _guardTimer.Interval = TimeSpan.FromMilliseconds(800);
         _guardTimer.Tick += (_, _) => EnforcePreLoginGuard();
+        _miniBar.ExitRequested += MiniBar_ExitRequested;
 
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         Deactivated += MainWindow_Deactivated;
@@ -127,16 +128,7 @@ public partial class MainWindow : Window
 
     private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_activeSession is null) return;
-        try
-        {
-            await _api.StopSessionAsync(_activeSession.Id, "User logout from Windows client");
-        }
-        catch
-        {
-            // Tetap kunci lokal walau server gagal, supaya client tidak bebas terbuka.
-        }
-        ResetToLogin("Session selesai. Hubungi operator untuk isi ulang jika waktu sudah habis.");
+        await StopSessionToLoginAsync();
     }
 
     private void SyncSessionFromServer(SessionResponse session)
@@ -313,6 +305,56 @@ public partial class MainWindow : Window
         else _power.Shutdown();
     }
 
+    private async Task StopSessionToLoginAsync()
+    {
+        if (_activeSession is null) return;
+        try
+        {
+            await _api.StopSessionAsync(_activeSession.Id, "User logout from Windows client");
+        }
+        catch
+        {
+            // Tetap kunci lokal walau server gagal, supaya client tidak bebas terbuka.
+        }
+        ResetToLogin("Session selesai. Hubungi operator untuk isi ulang jika waktu sudah habis.");
+    }
+
+    private async Task StopSessionAndShutdownAsync()
+    {
+        if (_activeSession is null) return;
+
+        var username = _activeSession.Username;
+        var confirm = MessageBox.Show(
+            $"Akhiri session {username} sekarang?\nSisa waktu user akan disimpan di server, lalu komputer akan shutdown.",
+            "Konfirmasi Keluar",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            await _api.StopSessionAsync(_activeSession.Id, "User exit from mini bar and shutdown Windows client");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Gagal menyimpan status session ke server:\n{ex.Message}\n\nShutdown dibatalkan agar waktu user tidak hilang.",
+                "Gagal Menyimpan Session",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        _remoteActionTriggered = true;
+        _miniBar.ShowWarning(_activeSession.ComputerCode, _activeSession.Username, "shutdown", "0");
+        _power.Shutdown();
+    }
+
     private void ResetToLogin(string message)
     {
         _activeSession = null;
@@ -338,6 +380,11 @@ public partial class MainWindow : Window
         }
         _miniBar.Topmost = true;
         _miniBar.PositionAtTopCenter();
+    }
+
+    private async void MiniBar_ExitRequested(object? sender, EventArgs e)
+    {
+        await StopSessionAndShutdownAsync();
     }
 
     private void HideMiniBar()

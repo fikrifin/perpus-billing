@@ -9,6 +9,7 @@ Status saat ini: skeleton WPF/.NET 8 sudah dibuat untuk kontrak MVP:
 - Login user dengan username/password.
 - Menampilkan session aktif dan countdown.
 - Saat login sukses, window utama di-hide dan muncul mini top bar always-on-top di atas tengah.
+- Mini bar sekarang dibuat lebih kecil lagi dan punya tombol keluar cepat dengan konfirmasi.
 - Warning 60 detik terakhir tampil non-intrusive di mini top bar dengan state berkedip.
 - Menjalankan aksi akhir tepat saat waktu mencapai `00:00`.
 - Menerima command dari backend melalui response heartbeat.
@@ -105,6 +106,7 @@ dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Relea
 - Command `shutdown` dan `restart` memakai `shutdown.exe /s /t 0` dan `shutdown.exe /r /t 0`. Ini nyata di Windows, bukan simulasi.
 - Command `lock` memakai `LockWorkStation()` dari `user32.dll`.
 - Window dibuat fullscreen/topmost sebagai lock screen dasar. Saat user sudah login, warning akhir diarahkan tetap di mini top bar agar tidak terlalu mengganggu aktivitas user.
+- Mini bar menyediakan tombol keluar cepat. Saat ditekan, user diminta konfirmasi dulu. Jika dikonfirmasi, client akan stop session ke server dulu agar waktu/user state tersimpan, lalu komputer shutdown.
 - Pada mode belum-login sekarang ditambah hardening ringan: best-effort tahan minimize, tahan close normal, re-activate window saat kehilangan fokus, dan blok shortcut dasar seperti `Alt+F4`.
 - Ini belum hardening kiosk penuh.
 
