@@ -1,7 +1,10 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
-import { db, migrate, nowIso, addMinutes, hashPassword, verifyPassword, publicUser } from './db.js';
+import crypto from 'node:crypto';
+import { statSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { db, dbPath, migrate, nowIso, addMinutes, hashPassword, verifyPassword, publicUser, backupDatabase } from './db.js';
 import { broadcast, registerRealtime } from './realtime.js';
 
 migrate();
@@ -10,6 +13,64 @@ const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 await app.register(websocket);
 registerRealtime(app);
+
+const PUBLIC_ROUTES = [
+  ['GET', '/health'],
+  ['GET', '/api/settings'],
+  ['POST', '/api/auth/login'],
+  ['POST', /^\/api\/computers\/[^/]+\/heartbeat$/],
+  ['POST', /^\/api\/client-commands\/[^/]+\/ack$/],
+  ['POST', '/api/users/validate-login'],
+  ['POST', '/api/sessions/start']
+];
+
+function isPublicRoute(method, url) {
+  const pathname = url.split('?')[0];
+  return PUBLIC_ROUTES.some(([routeMethod, routePath]) => {
+    if (routeMethod !== method) return false;
+    return routePath instanceof RegExp ? routePath.test(pathname) : routePath === pathname;
+  });
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function createOperatorSession(operatorId) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = addMinutes(new Date(), 12 * 60);
+  db.prepare('INSERT INTO operator_sessions (operator_id, token_hash, expires_at) VALUES (?, ?, ?)')
+    .run(operatorId, hashToken(token), expiresAt);
+  return { token, expires_at: expiresAt };
+}
+
+function authenticateOperator(req) {
+  const auth = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return null;
+  return db.prepare(`
+    SELECT os.*, o.id as operator_id, o.name, o.username, o.role, o.is_active
+    FROM operator_sessions os
+    JOIN operators o ON o.id = os.operator_id
+    WHERE os.token_hash = ? AND os.revoked_at IS NULL AND os.expires_at > ? AND o.is_active = 1
+  `).get(hashToken(token), nowIso());
+}
+
+app.addHook('preHandler', async (req, reply) => {
+  const session = authenticateOperator(req);
+  if (session) {
+    req.operator = {
+      id: session.operator_id,
+      name: session.name,
+      username: session.username,
+      role: session.role,
+      session_id: session.id
+    };
+    return;
+  }
+  if (isPublicRoute(req.method, req.url)) return;
+  return reply.code(401).send({ error: 'Login operator dibutuhkan' });
+});
 
 function required(body, fields) {
   for (const field of fields) {
@@ -155,14 +216,37 @@ app.patch('/api/settings', async (req, reply) => {
   return Object.fromEntries(rows.map((row) => [row.key, row.value]));
 });
 
+app.post('/api/maintenance/backup', async (req, reply) => {
+  const backupDir = process.env.PERPUS_BACKUP_DIR ? process.env.PERPUS_BACKUP_DIR : join(dirname(dbPath), 'backups');
+  const timestamp = nowIso().replace(/[:.]/g, '-');
+  const destination = join(backupDir, `perpus-billing-${timestamp}.db`);
+  try {
+    await backupDatabase(destination);
+    const file = statSync(destination);
+    db.prepare('INSERT INTO usage_logs (operator_id, action, note) VALUES (?, ?, ?)')
+      .run(req.operator?.id ?? null, 'database_backup', `Backup database dibuat: ${basename(destination)}`);
+    return reply.code(201).send({ ok: true, path: destination, filename: basename(destination), size_bytes: file.size, created_at: nowIso() });
+  } catch (error) {
+    return reply.code(500).send({ error: `Backup database gagal: ${error.message}` });
+  }
+});
+
 app.post('/api/auth/login', async (req, reply) => {
   const missing = required(req.body, ['username', 'password']);
   if (missing) return reply.code(400).send({ error: `${missing} wajib diisi` });
   const operator = db.prepare('SELECT * FROM operators WHERE username = ? AND is_active = 1').get(req.body.username);
   if (!operator || !verifyPassword(req.body.password, operator.password_hash)) return reply.code(401).send({ error: 'Username/password operator tidak valid' });
   const { password_hash, ...safe } = operator;
-  return { operator: safe };
+  const session = createOperatorSession(operator.id);
+  return { operator: safe, token: session.token, expires_at: session.expires_at };
 });
+
+app.post('/api/auth/logout', async (req) => {
+  db.prepare('UPDATE operator_sessions SET revoked_at = ? WHERE id = ?').run(nowIso(), req.operator.session_id);
+  return { ok: true };
+});
+
+app.get('/api/auth/me', async (req) => ({ operator: req.operator }));
 
 app.get('/api/computers', async () => db.prepare('SELECT * FROM computers ORDER BY code').all());
 app.post('/api/computers', async (req, reply) => {
@@ -208,10 +292,10 @@ app.post('/api/computers/:id/command', async (req, reply) => {
   const command = req.body?.command;
   if (!['lock', 'shutdown', 'restart'].includes(command)) return reply.code(400).send({ error: 'command harus lock, shutdown, atau restart' });
   const result = db.prepare('INSERT INTO client_commands (computer_id, operator_id, command, note) VALUES (?, ?, ?, ?)')
-    .run(computer.id, req.body?.operator_id ?? null, command, req.body?.note ?? null);
+    .run(computer.id, req.operator?.id ?? null, command, req.body?.note ?? null);
   const row = commandDetails(result.lastInsertRowid);
   db.prepare('INSERT INTO usage_logs (computer_id, operator_id, action, note) VALUES (?, ?, ?, ?)')
-    .run(computer.id, req.body?.operator_id ?? null, 'client_command', `${command}${req.body?.note ? `: ${req.body.note}` : ''}`);
+    .run(computer.id, req.operator?.id ?? null, 'client_command', `${command}${req.body?.note ? `: ${req.body.note}` : ''}`);
   broadcast('client.command', row);
   return reply.code(201).send(row);
 });
@@ -289,7 +373,7 @@ app.post('/api/users', async (req, reply) => {
   if (!['member', 'one_time'].includes(req.body.user_type)) return reply.code(400).send({ error: 'user_type harus member atau one_time' });
   try {
     const result = db.prepare(`INSERT INTO users (username, password_hash, user_type, full_name, member_number, identity_number_optional, default_duration_minutes, created_by_operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)      
-      .run(req.body.username, hashPassword(req.body.password), req.body.user_type, req.body.full_name ?? null, req.body.member_number ?? null, req.body.identity_number_optional ?? null, req.body.default_duration_minutes ?? null, req.body.created_by_operator_id ?? null);
+      .run(req.body.username, hashPassword(req.body.password), req.body.user_type, req.body.full_name ?? null, req.body.member_number ?? null, req.body.identity_number_optional ?? null, req.body.default_duration_minutes ?? null, req.operator?.id ?? null);
     return reply.code(201).send(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid)));
   } catch (error) {
     return reply.code(409).send({ error: 'Username sudah digunakan' });
@@ -309,7 +393,7 @@ app.post('/api/users/:id/disable', async (req, reply) => {
   if (activeSessionForUser(user.id)) return reply.code(409).send({ error: 'User masih punya session aktif' });
   db.prepare(`UPDATE users SET status = 'disabled', cancelled_at = COALESCE(cancelled_at, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(nowIso(), user.id);
   db.prepare('INSERT INTO usage_logs (user_id, operator_id, action, note) VALUES (?, ?, ?, ?)')
-    .run(user.id, req.body?.operator_id ?? null, 'user_disabled', req.body?.note ?? null);
+    .run(user.id, req.operator?.id ?? null, 'user_disabled', req.body?.note ?? null);
   return publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
 });
 app.post('/api/users/:id/reset-password', async (req, reply) => {
@@ -319,7 +403,7 @@ app.post('/api/users/:id/reset-password', async (req, reply) => {
   if (!user) return reply.code(404).send({ error: 'User tidak ditemukan' });
   db.prepare(`UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(hashPassword(req.body.password), user.id);
   db.prepare('INSERT INTO usage_logs (user_id, operator_id, action, note) VALUES (?, ?, ?, ?)')
-    .run(user.id, req.body?.operator_id ?? null, 'user_password_reset', 'Password user direset operator');
+    .run(user.id, req.operator?.id ?? null, 'user_password_reset', 'Password user direset operator');
   return publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
 });
 
@@ -329,7 +413,7 @@ app.post('/api/sessions/start', async (req, reply) => {
   const missing = required(req.body, ['username', 'computer_code']);
   if (missing) return reply.code(400).send({ error: `${missing} wajib diisi` });
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(req.body.username);
-  const operatorStart = Boolean(req.body.operator_id);
+  const operatorStart = Boolean(req.operator);
   if (!user || (!operatorStart && !verifyPassword(req.body.password, user.password_hash))) return reply.code(401).send({ error: 'Username/password tidak valid' });
   if (user.status !== 'active') return reply.code(403).send({ error: `Akun tidak aktif: ${user.status}` });
   if (activeSessionForUser(user.id)) return reply.code(409).send({ error: 'User masih punya session aktif' });
@@ -345,11 +429,11 @@ app.post('/api/sessions/start', async (req, reply) => {
   const start = new Date();
   const end = addMinutes(start, duration);
   const result = db.prepare(`INSERT INTO sessions (user_id, computer_id, operator_id, start_time, end_time, duration_minutes, usage_note) VALUES (?, ?, ?, ?, ?, ?, ?)`)    
-    .run(user.id, computer.id, req.body.operator_id ?? user.created_by_operator_id ?? null, start.toISOString(), end, duration, req.body.usage_note ?? null);
+    .run(user.id, computer.id, req.operator?.id ?? user.created_by_operator_id ?? null, start.toISOString(), end, duration, req.body.usage_note ?? null);
   const session = sessionDetails(result.lastInsertRowid);
   db.prepare('UPDATE computers SET status = ?, active_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('in_use', session.id, computer.id);
   db.prepare(`UPDATE users SET status = 'in_use', default_duration_minutes = default_duration_minutes - ?, activated_at = COALESCE(activated_at, ?), last_used_computer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(duration, start.toISOString(), computer.id, user.id);
-  db.prepare('INSERT INTO usage_logs (session_id, user_id, computer_id, operator_id, action, note) VALUES (?, ?, ?, ?, ?, ?)').run(session.id, user.id, computer.id, req.body.operator_id ?? null, 'session_started', null);
+  db.prepare('INSERT INTO usage_logs (session_id, user_id, computer_id, operator_id, action, note) VALUES (?, ?, ?, ?, ?, ?)').run(session.id, user.id, computer.id, req.operator?.id ?? null, 'session_started', null);
   broadcast('session.started', session);
   return reply.code(201).send(session);
 });
@@ -359,7 +443,7 @@ app.post('/api/sessions/:id/extend', async (req, reply) => {
   const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id);
   if (!session) return reply.code(404).send({ error: 'Session tidak ditemukan' });
   if (session.status !== 'active') return reply.code(409).send({ error: 'Session tidak aktif' });
-  return extendActiveSession(session, minutes, req.body?.operator_id ?? null, req.body?.note ?? null);
+  return extendActiveSession(session, minutes, req.operator?.id ?? null, req.body?.note ?? null);
 });
 
 app.post('/api/users/:username/topup', async (req, reply) => {
@@ -373,7 +457,7 @@ app.post('/api/users/:username/topup', async (req, reply) => {
     return reply.code(409).send({ error: 'Akun one-time yang sudah selesai tidak bisa diisi ulang. Buat akun one-time baru.' });
   }
   if (activeSession) {
-    const session = extendActiveSession(activeSession, minutes, req.body?.operator_id ?? null, req.body?.note ?? `Top up ${minutes} minutes for ${user.username}`);
+    const session = extendActiveSession(activeSession, minutes, req.operator?.id ?? null, req.body?.note ?? `Top up ${minutes} minutes for ${user.username}`);
     const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
     return { mode: 'session_extended', minutes_added: minutes, user: publicUser(updatedUser), session };
   }
@@ -381,7 +465,7 @@ app.post('/api/users/:username/topup', async (req, reply) => {
   db.prepare(`UPDATE users SET default_duration_minutes = ?, status = 'active', expired_at = NULL, cancelled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
     .run(minutes, user.id);
   db.prepare('INSERT INTO usage_logs (user_id, operator_id, action, note) VALUES (?, ?, ?, ?)')
-    .run(user.id, req.body?.operator_id ?? null, 'user_topup', req.body?.note ?? `Refilled account with ${minutes} minutes`);
+    .run(user.id, req.operator?.id ?? null, 'user_topup', req.body?.note ?? `Refilled account with ${minutes} minutes`);
   const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
   broadcast('user.topped_up', publicUser(updatedUser));
   return { mode: 'user_refilled', minutes_added: minutes, user: publicUser(updatedUser) };
@@ -399,7 +483,7 @@ app.post('/api/sessions/:id/expire', async (req, reply) => {
   db.prepare('UPDATE computers SET status = ?, active_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('expired', session.computer_id);
   db.prepare(`UPDATE users SET status = ?, expired_at = CASE WHEN ? = 'expired' THEN COALESCE(expired_at, ?) ELSE NULL END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
     .run(nextUserStatus, nextUserStatus, expiredAt, session.user_id);
-  db.prepare('INSERT INTO usage_logs (session_id, user_id, computer_id, operator_id, action, note) VALUES (?, ?, ?, ?, ?, ?)').run(session.id, session.user_id, session.computer_id, req.body?.operator_id ?? null, 'session_expired_manual', req.body?.note ?? null);
+  db.prepare('INSERT INTO usage_logs (session_id, user_id, computer_id, operator_id, action, note) VALUES (?, ?, ?, ?, ?, ?)').run(session.id, session.user_id, session.computer_id, req.operator?.id ?? null, 'session_expired_manual', req.body?.note ?? null);
   const updated = sessionDetails(req.params.id);
   broadcast('session.expired', { ...updated, expire_action: 'shutdown' });
   return updated;
@@ -432,7 +516,7 @@ app.post('/api/sessions/:id/stop', async (req, reply) => {
     WHERE id = ?
   `).run(nextUserStatus, refundedMinutes, stopStatus, stoppedAtIso, session.user_id);
   db.prepare('INSERT INTO usage_logs (session_id, user_id, computer_id, operator_id, action, note) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(session.id, session.user_id, session.computer_id, req.body?.operator_id ?? null, 'session_stopped', noteParts.join('; ') || null);
+    .run(session.id, session.user_id, session.computer_id, req.operator?.id ?? null, 'session_stopped', noteParts.join('; ') || null);
   const updated = { ...sessionDetails(req.params.id), refunded_minutes: refundedMinutes };
   broadcast('session.stopped', updated);
   return updated;

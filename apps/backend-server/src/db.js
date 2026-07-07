@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-const dbPath = process.env.PERPUS_DB_PATH ? resolve(process.env.PERPUS_DB_PATH) : resolve(process.cwd(), 'data/perpus-billing.db');
+export const dbPath = process.env.PERPUS_DB_PATH ? resolve(process.env.PERPUS_DB_PATH) : resolve(process.cwd(), 'data/perpus-billing.db');
 mkdirSync(dirname(dbPath), { recursive: true });
 
 export const db = new Database(dbPath);
@@ -112,6 +112,15 @@ export function migrate() {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS operator_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operator_id INTEGER NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      FOREIGN KEY(operator_id) REFERENCES operators(id)
+    );
   `);
   seed();
 }
@@ -160,11 +169,31 @@ function seed() {
 
 export function nowIso() { return new Date().toISOString(); }
 export function addMinutes(date, minutes) { return new Date(date.getTime() + minutes * 60_000).toISOString(); }
-export function hashPassword(password) { return `sha256:${crypto.createHash('sha256').update(String(password)).digest('hex')}`; }
+export function hashPassword(password) {
+  const iterations = 120_000;
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(String(password), salt, iterations, 32, 'sha256').toString('hex');
+  return `pbkdf2:${iterations}:${salt}:${hash}`;
+}
 export function verifyPassword(password, storedHash) {
   if (!storedHash) return false;
-  if (storedHash.startsWith('sha256:')) return hashPassword(password) === storedHash;
+  if (storedHash.startsWith('pbkdf2:')) {
+    const [, iterationsText, salt, expectedHash] = storedHash.split(':');
+    const iterations = Number(iterationsText);
+    if (!Number.isFinite(iterations) || !salt || !expectedHash) return false;
+    const actualHash = crypto.pbkdf2Sync(String(password), salt, iterations, 32, 'sha256').toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'));
+  }
+  if (storedHash.startsWith('sha256:')) {
+    const legacyHash = `sha256:${crypto.createHash('sha256').update(String(password)).digest('hex')}`;
+    return legacyHash === storedHash;
+  }
   return String(password) === storedHash;
+}
+export async function backupDatabase(destinationPath) {
+  mkdirSync(dirname(destinationPath), { recursive: true });
+  await db.backup(destinationPath);
+  return destinationPath;
 }
 export function publicUser(row) {
   if (!row) return row;

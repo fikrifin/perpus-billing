@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { API_BASE, deleteJson, getJson, patchJson, postJson } from './api.js';
+import { API_BASE, deleteJson, getAuthToken, getJson, patchJson, postJson, setAuthToken } from './api.js';
 import './styles.css';
 
 function useForm(initial) {
@@ -32,6 +32,7 @@ function App() {
   const [selectedComputer, setSelectedComputer] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [settings, setSettings] = useState({});
+  const [authReady, setAuthReady] = useState(!getAuthToken());
 
   const activeUsers = users.filter((user) => user.status === 'active' && Number(user.default_duration_minutes ?? 0) > 0);
   const availableComputers = computers.filter((pc) => !pc.active_session_id && pc.status !== 'in_use');
@@ -80,17 +81,33 @@ function App() {
   }
 
   useEffect(() => {
+    async function restoreSession() {
+      if (!getAuthToken()) return;
+      try {
+        const result = await getJson('/api/auth/me');
+        setOperator(result.operator);
+      } catch (_) {
+        setAuthToken('');
+      } finally {
+        setAuthReady(true);
+      }
+    }
+    restoreSession();
+  }, []);
+
+  useEffect(() => {
+    if (!authReady || !operator) return;
     loadAll();
     const timer = setInterval(loadAll, 5000);
     return () => clearInterval(timer);
-  }, [reportDate]);
+  }, [authReady, operator, reportDate]);
 
   useEffect(() => {
     let ws;
     try {
       const url = API_BASE.replace('http://', 'ws://').replace('https://', 'wss://') + '/ws';
       ws = new WebSocket(url);
-      ws.onmessage = () => loadAll();
+      ws.onmessage = () => { if (operator) loadAll(); };
     } catch (_) {}
     return () => ws?.close();
   }, []);
@@ -108,7 +125,7 @@ function App() {
     setNotice('');
     try {
       await handler();
-      await loadAll();
+      if (getAuthToken()) await loadAll();
     } catch (err) {
       setError(err.message);
     }
@@ -116,8 +133,25 @@ function App() {
 
   async function login() {
     const result = await postJson('/api/auth/login', loginForm.values);
+    setAuthToken(result.token);
     setOperator(result.operator);
     setNotice(`Login sebagai ${result.operator.name}`);
+  }
+
+  async function logout() {
+    try {
+      if (getAuthToken()) await postJson('/api/auth/logout', {});
+    } finally {
+      setAuthToken('');
+      setOperator(null);
+      setComputers([]);
+      setUsers([]);
+      setPackages([]);
+      setSessions([]);
+      setReport(null);
+      setLogs([]);
+      setNotice('Logout berhasil');
+    }
   }
 
   async function createComputer() {
@@ -131,6 +165,11 @@ function App() {
     setSettings(saved);
     settingsForm.setValues((prev) => ({ ...prev, ...saved }));
     setNotice('Pengaturan berhasil disimpan');
+  }
+
+  async function createDatabaseBackup() {
+    const result = await postJson('/api/maintenance/backup', { operator_id: operator?.id });
+    setNotice(`Backup database berhasil: ${result.filename} (${formatBytes(result.size_bytes)})`);
   }
 
   function resetSettingsForm() {
@@ -315,6 +354,7 @@ function App() {
         <div className="server-card">
           <span className={serverOk ? 'dot ok' : 'dot bad'} />
           <div><strong>{serverOk ? 'Backend online' : 'Backend offline'}</strong><small>{API_BASE}</small></div>
+          {operator && <button className="secondary compact" onClick={() => submit(logout)}>Logout</button>}
         </div>
       </header>
 
@@ -329,7 +369,7 @@ function App() {
         <Card title="Durasi Hari Ini" value={`${stats.durationToday} menit`} />
       </section>
 
-      <nav className="tabs" aria-label="Navigasi dashboard">
+      {operator && <nav className="tabs" aria-label="Navigasi dashboard">
         {[
           ['dashboard', 'Dashboard'],
           ['sessions', 'Session'],
@@ -340,16 +380,29 @@ function App() {
         ].map(([key, label]) => (
           <button key={key} className={activeTab === key ? 'active' : ''} onClick={() => setActiveTab(key)}>{label}</button>
         ))}
-      </nav>
+      </nav>}
 
-      {activeTab === 'dashboard' && (
-        <section className="layout">
-          <Panel title="Login Operator" subtitle={operator ? `Aktif: ${operator.name} (${operator.role})` : 'Development default: admin/admin'}>
+      {!authReady && <Panel title="Memeriksa Session Operator"><p className="muted">Mohon tunggu sebentar...</p></Panel>}
+
+      {authReady && !operator && (
+        <section className="layout login-layout">
+          <Panel title="Login Operator" subtitle="Masuk dulu untuk mengakses dashboard operator.">
             <div className="form two">
               <input placeholder="Username" {...loginForm.bind('username')} />
               <input placeholder="Password" type="password" {...loginForm.bind('password')} />
               <button onClick={() => submit(login)}>Login</button>
             </div>
+          </Panel>
+        </section>
+      )}
+
+      {operator && activeTab === 'dashboard' && (
+        <section className="layout">
+          <Panel title="Operator Aktif" subtitle={`${operator.name} (${operator.role})`}>
+            <ul className="summary-list">
+              <li><strong>{operator.username}</strong><span>Username operator</span></li>
+              <li><strong>12 jam</strong><span>Masa session login</span></li>
+            </ul>
           </Panel>
           <Panel title="Ringkasan Hari Ini" subtitle={`${report?.total_sessions ?? 0} session · ${stats.durationToday} menit penggunaan`}>
             <ul className="summary-list">
@@ -459,6 +512,15 @@ function App() {
               <div className="actions settings-actions"><button onClick={() => submit(saveSettings)}>Simpan Pengaturan</button><button className="secondary" onClick={resetSettingsForm}>Reset Form</button></div>
             </div>
           </Panel>
+          <Panel title="Backup Database" subtitle="Buat salinan database SQLite sebelum update app atau setelah operasional harian." wide>
+            <div className="maintenance-card">
+              <div>
+                <strong>Backup manual</strong>
+                <p className="muted">File backup disimpan di folder data backend: <code>data/backups</code>.</p>
+              </div>
+              <button onClick={() => submit(createDatabaseBackup)}>Buat Backup Sekarang</button>
+            </div>
+          </Panel>
           <Panel title="Paket Durasi" wide>
             <div className="form inline package-form">
               <input placeholder="Nama paket" {...packageForm.bind('name')} />
@@ -504,6 +566,12 @@ function todayInputDate() { return new Date().toISOString().slice(0, 10); }
 function csvCell(value) {
   const text = String(value ?? '');
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+function formatBytes(bytes) {
+  const value = Number(bytes ?? 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 function formatTime(value) { return value ? new Date(value).toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }) : '-'; }
 function formatRemaining(endTime) {
