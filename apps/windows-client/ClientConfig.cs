@@ -10,6 +10,7 @@ public sealed record ClientConfig
     public string ClientVersion { get; init; } = "windows-client-0.1.0";
     public int HeartbeatFallbackSeconds { get; init; } = 5;
     public bool AutoStartOnLogin { get; init; } = true;
+    public string AdminExitCode { get; init; } = "perpus-admin";
 
     public static string ConfigPath => Path.Combine(AppContext.BaseDirectory, "appsettings.json");
 
@@ -33,7 +34,8 @@ public sealed record ClientConfig
             ComputerCode = string.IsNullOrWhiteSpace(config.ComputerCode) ? "PC-01" : config.ComputerCode.Trim().ToUpperInvariant(),
             ClientVersion = string.IsNullOrWhiteSpace(config.ClientVersion) ? "windows-client-0.1.0" : config.ClientVersion,
             HeartbeatFallbackSeconds = config.HeartbeatFallbackSeconds <= 0 ? 5 : config.HeartbeatFallbackSeconds,
-            AutoStartOnLogin = config.AutoStartOnLogin
+            AutoStartOnLogin = config.AutoStartOnLogin,
+            AdminExitCode = string.IsNullOrWhiteSpace(config.AdminExitCode) ? "perpus-admin" : config.AdminExitCode
         };
     }
 

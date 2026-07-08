@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -18,6 +19,7 @@ public partial class MainWindow : Window
     private readonly MiniBarWindow _miniBar = new();
 
     private SettingsResponse _settings = new();
+    private bool _adminExitUnlocked;
     private SessionResponse? _activeSession;
     private bool _finalActionTriggered;
     private bool _remoteActionTriggered;
@@ -93,6 +95,10 @@ public partial class MainWindow : Window
     private void ApplySettings()
     {
         BusinessNameText.Text = _settings.BusinessName;
+        AdminExitHintText.Text = _config.AutoStartOnLogin
+            ? "Mode auto-start aktif. Masukkan kode admin untuk menutup aplikasi lalu kembali ke desktop Windows."
+            : "Masukkan kode admin untuk menutup aplikasi client ini."
+            ;
     }
 
     private void ScheduleNextHeartbeat()
@@ -355,6 +361,54 @@ public partial class MainWindow : Window
         _power.Shutdown();
     }
 
+    private void AdminExitExpander_Expanded(object sender, RoutedEventArgs e)
+    {
+        AdminExitCodeBox.Clear();
+        ErrorText.Text = "";
+        AdminExitCodeBox.Focus();
+    }
+
+    private void AdminExitCancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        AdminExitExpander.IsExpanded = false;
+        AdminExitCodeBox.Clear();
+        ErrorText.Text = "";
+        UsernameBox.Focus();
+    }
+
+    private void AdminExitButton_Click(object sender, RoutedEventArgs e)
+    {
+        ErrorText.Text = "";
+        if (!string.Equals(AdminExitCodeBox.Password, _config.AdminExitCode, StringComparison.Ordinal))
+        {
+            AdminExitCodeBox.Clear();
+            ErrorText.Text = "Kode admin salah.";
+            AdminExitCodeBox.Focus();
+            return;
+        }
+
+        _adminExitUnlocked = true;
+        _heartbeatTimer.Stop();
+        _clockTimer.Stop();
+        _guardTimer.Stop();
+        HideMiniBar();
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            // best effort; kalau explorer gagal, tetap lanjut tutup app
+        }
+
+        Application.Current.Shutdown();
+    }
+
     private void ResetToLogin(string message)
     {
         _activeSession = null;
@@ -529,6 +583,12 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (_adminExitUnlocked)
+        {
+            e.Cancel = false;
+            return;
+        }
+
         e.Cancel = true;
 
         if (_activeSession is not null)

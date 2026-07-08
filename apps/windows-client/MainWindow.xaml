@@ -33,8 +33,20 @@
           <TextBlock Text="Username" FontWeight="SemiBold" />
           <TextBox x:Name="UsernameBox" Height="44" Margin="0,6,0,14" FontSize="16" />
           <TextBlock Text="Password" FontWeight="SemiBold" />
-          <PasswordBox x:Name="PasswordBox" Height="44" Margin="0,6,0,22" FontSize="16" />
+          <PasswordBox x:Name="PasswordBox" Height="44" Margin="0,6,0,12" FontSize="16" />
           <Button x:Name="LoginButton" Content="Mulai Pakai Komputer" Height="48" FontSize="16" FontWeight="Bold" Click="LoginButton_Click" Background="#1f6f4a" Foreground="White" />
+          <Expander x:Name="AdminExitExpander" Margin="0,18,0,0" Header="Admin / teknisi" Expanded="AdminExitExpander_Expanded">
+            <StackPanel Margin="0,12,0,0">
+              <TextBlock Text="Kalau komputer ini auto-start, pakai kode admin untuk keluar dari aplikasi client." Foreground="#52615b" TextWrapping="Wrap" />
+              <TextBlock Text="Kode admin" FontWeight="SemiBold" Margin="0,14,0,0" />
+              <PasswordBox x:Name="AdminExitCodeBox" Height="42" Margin="0,6,0,12" FontSize="16" />
+              <StackPanel Orientation="Horizontal">
+                <Button x:Name="AdminExitButton" Content="Keluar ke Windows" Width="170" Height="42" Click="AdminExitButton_Click" Background="#8a5a00" Foreground="White" />
+                <Button Content="Tutup" Width="110" Height="42" Margin="12,0,0,0" Click="AdminExitCancelButton_Click" Background="#eef4ef" Foreground="#1f4b38" />
+              </StackPanel>
+              <TextBlock x:Name="AdminExitHintText" Foreground="#7a5a00" Margin="0,12,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+          </Expander>
           <TextBlock x:Name="ErrorText" Foreground="#b42318" Margin="0,16,0,0" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
