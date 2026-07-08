@@ -28,8 +28,8 @@ Setelah setup selesai:
 1. PC menyala
 2. Windows auto-login ke akun `PerpusClient`
 3. aplikasi Perpus Billing auto-run
-4. user hanya melihat lock screen client
-5. setelah login session perpustakaan, mini bar tampil
+4. user hanya melihat lock screen client, sementara taskbar/shell Windows disembunyikan
+5. setelah login session perpustakaan, mini bar tampil dan shell Windows dimunculkan lagi
 6. saat session habis, kembali lock / shutdown / restart sesuai aturan
 
 ---
@@ -44,6 +44,7 @@ Setelah setup selesai:
 - [ ] uji koneksi ke backend LAN
 - [ ] batasi/disable Task Manager
 - [ ] batasi tool sistem yang tidak perlu
+- [ ] verifikasi crash log & auto-relaunch saat pre-login
 - [ ] uji sign out / restart / session expire
 
 ---
@@ -219,6 +220,7 @@ Setelah restart PC:
 
 - Windows login ke `PerpusClient`
 - app client otomatis terbuka fullscreen
+- taskbar Windows tidak terlihat selama client masih di lock screen
 
 ---
 
@@ -318,6 +320,12 @@ Tes minimal yang harus dijalankan:
 - coba sign out
 - catat escape path yang masih lolos
 
+### Test F — Simulasi crash saat pre-login
+- pastikan client sedang di lock screen (belum ada session aktif)
+- paksa crash/close abnormal dari Visual Studio atau Task Manager bila perlu untuk simulasi
+- cek apakah app mencoba hidup lagi otomatis
+- cek file log crash di `%LOCALAPPDATA%\\PerpusBilling\\WindowsClient\\logs`
+
 ---
 
 ## Langkah 10 — SOP Maintenance
@@ -350,8 +358,8 @@ Ini penting supaya maintenance tidak merusak flow kiosk/client.
 Kalau pilot awal berjalan baik, lanjutkan ke:
 
 - Assigned Access / kiosk mode
-- watchdog / auto-relaunch app
-- local file logging
+- helper watchdog terpisah kalau recovery internal masih kurang
+- local file logging yang lebih lengkap
 - installer/config helper
 - update mechanism yang lebih rapi
 

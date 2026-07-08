@@ -110,9 +110,10 @@ dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Relea
 - Command `lock` memakai `LockWorkStation()` dari `user32.dll`.
 - Window dibuat fullscreen/topmost sebagai lock screen dasar. Saat user sudah login, warning akhir diarahkan tetap di mini top bar agar tidak terlalu mengganggu aktivitas user.
 - Mini bar menyediakan tombol keluar cepat. Saat ditekan, user diminta konfirmasi dulu. Jika dikonfirmasi, client akan stop session ke server dulu agar waktu/user state tersimpan, lalu komputer shutdown.
-- Pada mode belum-login sekarang ditambah hardening ringan: best-effort tahan minimize, tahan close normal, re-activate window saat kehilangan fokus, dan blok shortcut dasar seperti `Alt+F4`.
+- Pada mode belum-login sekarang ditambah hardening ringan: best-effort tahan minimize, tahan close normal, re-activate window saat kehilangan fokus, blok `Alt+F4`, tahan `Alt+Tab` / `Alt+Esc`, dan sembunyikan taskbar/shell Windows.
 - App juga bisa best-effort mendaftarkan auto-start di registry `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` jika `autoStartOnLogin=true`.
 - Karena auto-start ini per-user, registrasi awal sebaiknya dilakukan dari akun `PerpusClient`, bukan `PerpusAdmin`.
+- App sekarang punya recovery ringan: kalau crash saat masih di mode pre-login, executable akan mencoba relaunch sendiri dan menulis crash log ke `%LOCALAPPDATA%\\PerpusBilling\\WindowsClient\\logs`.
 - Ini belum hardening kiosk penuh.
 
 ## Hardening Berikutnya
@@ -125,7 +126,7 @@ Sebelum pilot serius di perpustakaan:
 - Disable close/Alt+F4/Task Manager bypass semampunya atau pakai Windows Assigned Access/kiosk policy.
 - Installer sederhana untuk isi `serverUrl` + `computerCode`.
 - WebSocket realtime optional; heartbeat polling sudah cukup untuk MVP.
-- Logging lokal ke file untuk troubleshooting client.
+- Logging lokal yang lebih lengkap untuk troubleshooting client.
 
 Dokumen terkait:
 - [`docs/windows-client/hardening.md`](hardening.md)

@@ -50,6 +50,8 @@ Sudah ada implementasi dasar:
 - attempt minimize ditahan pada mode belum-login
 - re-activate window saat kehilangan fokus pada mode belum-login
 - blok shortcut dasar seperti `Alt+F4` pada mode belum-login
+- register hotkey untuk menahan `Alt+Tab` dan `Alt+Esc` saat belum login
+- taskbar / shell Windows disembunyikan saat belum login, lalu dimunculkan lagi saat session aktif atau admin exit
 - saat session aktif, main window di-hide
 - mini top bar always-on-top
 - mini bar punya tombol keluar cepat, tapi tetap pakai konfirmasi dulu sebelum stop session + shutdown
@@ -57,7 +59,7 @@ Sudah ada implementasi dasar:
 
 ### Keterbatasan
 
-Ini **tidak cukup** untuk melawan Task Manager atau user yang masih bisa buka shell/system tools.
+Ini **belum cukup** untuk melawan semua escape path seperti Task Manager, `Ctrl+Alt+Del`, atau shortcut sistem yang ditangani langsung oleh Windows. Jadi shell hide + hotkey blocking ini adalah lapisan awal, bukan proteksi final sendirian.
 
 ---
 
@@ -138,23 +140,37 @@ UTM bisa dipakai untuk eksperimen, tapi validasi final tetap lebih baik di Windo
 
 Tambahan proteksi yang bagus:
 
-- kalau UI app mati
-- ada proses lain yang mendeteksi
-- lalu auto-run ulang app
+- kalau UI app mati saat masih di mode belum-login
+- ada mekanisme yang mencoba menaikkan app lagi
+- lock screen tidak hilang permanen hanya karena crash sesaat
 
-### Bentuk implementasi yang mungkin
+### Status implementasi saat ini
 
-- helper process ringan
-- scheduled task saat logon
+Sudah ada lapisan recovery ringan di dalam app:
+
+- app menangkap `DispatcherUnhandledException`
+- app juga menangkap `AppDomain.CurrentDomain.UnhandledException`
+- kalau crash terjadi saat **pre-login locked mode**, app akan mencoba menjalankan executable yang sama lagi
+- crash log ditulis ke:
+  - `%LOCALAPPDATA%\\PerpusBilling\\WindowsClient\\logs\\crash-YYYYMMDD.log`
+
+### Kenapa dibatasi hanya saat pre-login?
+
+Karena target utamanya adalah menjaga lock screen tetap hidup. Kalau crash terjadi saat admin memang sedang exit ke Windows, atau saat session aktif user sedang memakai komputer, auto-relaunch paksa malah bisa mengganggu.
+
+### Bentuk implementasi lanjutan yang mungkin
+
+- helper process ringan terpisah
+- scheduled task tambahan untuk recovery
 - Windows service terpisah
 
 ### Manfaat
 
-Kalau user berhasil menutup app, app bisa muncul lagi.
+Kalau lock screen app crash saat belum login, ada peluang app otomatis muncul lagi tanpa menunggu restart/logoff manual.
 
 ### Keterbatasan
 
-Kalau user bisa kill watchdog juga, tetap bobol. Jadi ini pelengkap, bukan pengganti policy Windows.
+Kalau user bisa kill process berulang atau mematikan helper/watchdog juga, tetap bisa bobol. Jadi ini pelengkap, bukan pengganti policy Windows.
 
 ---
 

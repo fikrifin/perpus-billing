@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -10,6 +11,8 @@ namespace PerpusBilling.WindowsClient;
 
 public partial class MainWindow : Window
 {
+    private const int WM_HOTKEY = 0x0312;
+
     private readonly ClientConfig _config;
     private readonly PerpusApiClient _api;
     private readonly WindowsPowerController _power;
@@ -165,6 +168,7 @@ public partial class MainWindow : Window
         MessageText.Text = message;
         ShowMiniBar();
         _miniBar.StopWarning();
+        RestorePostLoginShell();
         HideMainWindowForActiveSession();
         RefreshSessionClock();
     }
@@ -376,22 +380,60 @@ public partial class MainWindow : Window
         UsernameBox.Focus();
     }
 
-    private void AdminExitButton_Click(object sender, RoutedEventArgs e)
+    private async void AdminExitButton_Click(object sender, RoutedEventArgs e)
     {
         ErrorText.Text = "";
-        if (!string.Equals(AdminExitCodeBox.Password, _config.AdminExitCode, StringComparison.Ordinal))
-        {
-            AdminExitCodeBox.Clear();
-            ErrorText.Text = "Kode admin salah.";
-            AdminExitCodeBox.Focus();
-            return;
-        }
+        AdminExitButton.IsEnabled = false;
 
+        try
+        {
+            if (!string.Equals(AdminExitCodeBox.Password, _config.AdminExitCode, StringComparison.Ordinal))
+            {
+                AdminExitCodeBox.Clear();
+                ErrorText.Text = "Kode admin salah.";
+                AdminExitCodeBox.Focus();
+                return;
+            }
+
+            await ExitToWindowsAsync();
+        }
+        finally
+        {
+            if (!_adminExitUnlocked)
+            {
+                AdminExitButton.IsEnabled = true;
+            }
+        }
+    }
+
+    private async Task ExitToWindowsAsync()
+    {
         _adminExitUnlocked = true;
         _heartbeatTimer.Stop();
         _clockTimer.Stop();
         _guardTimer.Stop();
-        HideMiniBar();
+        Deactivated -= MainWindow_Deactivated;
+        PreviewKeyDown -= MainWindow_PreviewKeyDown;
+        StateChanged -= Window_StateChanged;
+        Closing -= Window_Closing;
+        RestorePostLoginShell();
+        _miniBar.ExitRequested -= MiniBar_ExitRequested;
+        if (_miniBar.IsVisible)
+        {
+            _miniBar.Hide();
+        }
+        _miniBar.Close();
+        Topmost = false;
+        ShowInTaskbar = true;
+        WindowStyle = WindowStyle.SingleBorderWindow;
+        ResizeMode = ResizeMode.CanResize;
+        MessageText.Text = "Menutup client dan mengembalikan Windows...";
+
+        if (PresentationSource.FromVisual(this) is HwndSource source)
+        {
+            _power.UnregisterPreLoginHotKeys(source.Handle);
+            source.RemoveHook(WndProc);
+        }
 
         try
         {
@@ -406,7 +448,17 @@ public partial class MainWindow : Window
             // best effort; kalau explorer gagal, tetap lanjut tutup app
         }
 
+        await Dispatcher.InvokeAsync(() =>
+        {
+            Hide();
+            Close();
+        }, DispatcherPriority.Send);
+
+        await Task.Delay(200);
+        Application.Current.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         Application.Current.Shutdown();
+        await Task.Delay(200);
+        Environment.Exit(0);
     }
 
     private void ResetToLogin(string message)
@@ -414,6 +466,7 @@ public partial class MainWindow : Window
         _activeSession = null;
         _finalActionTriggered = false;
         _remoteActionTriggered = false;
+        ApplyPreLoginHardening();
         ShowMainWindow();
         _miniBar.StopWarning();
         HideMiniBar();
@@ -461,14 +514,14 @@ public partial class MainWindow : Window
             Show();
         }
         WindowState = WindowState.Maximized;
-        Topmost = true;
+        Topmost = IsPreLoginLocked();
         Activate();
         Focus();
     }
 
     private void EnforcePreLoginGuard()
     {
-        if (_activeSession is not null || _finalActionTriggered || _remoteActionTriggered)
+        if (!IsPreLoginLocked())
         {
             return;
         }
@@ -493,6 +546,11 @@ public partial class MainWindow : Window
 
     private void Window_StateChanged(object sender, EventArgs e)
     {
+        if (_adminExitUnlocked)
+        {
+            return;
+        }
+
         if (_activeSession is not null && WindowState == WindowState.Minimized)
         {
             WindowState = WindowState.Maximized;
@@ -500,7 +558,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_activeSession is null && WindowState == WindowState.Minimized)
+        if (IsPreLoginLocked() && WindowState == WindowState.Minimized)
         {
             WindowState = WindowState.Maximized;
             ShowMainWindow();
@@ -509,7 +567,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_Deactivated(object? sender, EventArgs e)
     {
-        if (_activeSession is not null || _finalActionTriggered || _remoteActionTriggered)
+        if (!IsPreLoginLocked())
         {
             return;
         }
@@ -519,7 +577,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (_activeSession is not null)
+        if (!IsPreLoginLocked())
         {
             return;
         }
@@ -547,7 +605,10 @@ public partial class MainWindow : Window
         if (PresentationSource.FromVisual(this) is HwndSource source)
         {
             source.AddHook(WndProc);
+            _power.RegisterPreLoginHotKeys(source.Handle);
+            _power.SetWindowTopmost(source.Handle, true);
         }
+        ApplyPreLoginHardening();
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -557,7 +618,14 @@ public partial class MainWindow : Window
         const int SC_CLOSE = 0xF060;
         const int SC_MINIMIZE = 0xF020;
 
-        if (_activeSession is null && !_finalActionTriggered && !_remoteActionTriggered)
+        if (msg == WM_HOTKEY && IsPreLoginLocked())
+        {
+            handled = true;
+            Dispatcher.BeginInvoke(ShowMainWindow, DispatcherPriority.ApplicationIdle);
+            return IntPtr.Zero;
+        }
+
+        if (IsPreLoginLocked())
         {
             if (msg == WM_CLOSE)
             {
@@ -599,6 +667,37 @@ public partial class MainWindow : Window
         }
 
         ShowMainWindow();
+    }
+
+    public bool IsPreLoginLocked()
+    {
+        return _activeSession is null && !_finalActionTriggered && !_remoteActionTriggered && !_adminExitUnlocked;
+    }
+
+    public bool IsAdminExitInProgress => _adminExitUnlocked;
+
+    public bool HasActiveSession => _activeSession is not null;
+
+    private void ApplyPreLoginHardening()
+    {
+        if (!OperatingSystem.IsWindows() || !IsLoaded || _adminExitUnlocked) return;
+        _power.SetShellVisibility(false);
+        if (PresentationSource.FromVisual(this) is HwndSource source)
+        {
+            _power.SetWindowTopmost(source.Handle, true);
+        }
+        Topmost = true;
+    }
+
+    private void RestorePostLoginShell()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        _power.SetShellVisibility(true);
+        if (PresentationSource.FromVisual(this) is HwndSource source)
+        {
+            _power.SetWindowTopmost(source.Handle, false);
+        }
+        Topmost = false;
     }
 
     private static string NormalizeAction(string? action)

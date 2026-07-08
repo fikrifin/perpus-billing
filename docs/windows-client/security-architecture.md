@@ -22,7 +22,8 @@ Target arsitektur ini:
 3. **Client harus auto-login ke akun public**
 4. **App client harus auto-start saat logon**
 5. **Task Manager dan system tools perlu dibatasi**
-6. **Kalau perlu hardening lebih lanjut, pakai Assigned Access / kiosk policy**
+6. **Saat mode belum-login, recovery/relaunch perlu dipertimbangkan**
+7. **Kalau perlu hardening lebih lanjut, pakai Assigned Access / kiosk policy**
 
 ---
 
@@ -82,6 +83,7 @@ Karakteristik:
 +---------------------------+
 | Pre-Login Lock Screen     |
 | Fullscreen + Topmost      |
+| Shell/taskbar hidden      |
 +-------------+-------------+
               |
               v
@@ -98,6 +100,8 @@ Karakteristik:
 | Heartbeat ke server       |
 +-------------+-------------+
               |
+              | jika app crash saat pre-login,
+              | recovery akan mencoba relaunch
               v
 +---------------------------+
 | Waktu habis / stop / lock |
@@ -152,7 +156,7 @@ PerpusAdmin (administrator)
 1. Windows boot
 2. otomatis login ke akun `PerpusClient`
 3. aplikasi Perpus Billing auto-run
-4. lock screen client tampil
+4. lock screen client tampil dan taskbar/shell Windows disembunyikan
 
 ### Catatan tentang auto-start
 Auto-start yang sekarang dipakai client berjalan via registry user:
@@ -170,7 +174,7 @@ Implikasinya:
 1. user memasukkan akun perpustakaan di app client
 2. session aktif dari server
 3. main lock screen hide
-4. mini top bar tampil
+4. mini top bar tampil, shell Windows dimunculkan lagi
 
 ### Saat session selesai
 1. waktu habis / operator stop / remote lock
@@ -227,7 +231,7 @@ Untuk tahap lebih matang:
 
 - [ ] Assigned Access / kiosk policy diuji
 - [ ] opsi sign out / switch user dibatasi semampunya
-- [ ] watchdog / auto-relaunch dipertimbangkan
+- [ ] recovery auto-relaunch diuji di mode pre-login
 - [ ] local logging tersedia
 - [ ] SOP maintenance ditulis untuk operator/teknisi
 

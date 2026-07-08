@@ -48,6 +48,30 @@ public sealed class WindowsStartupManager
         }
     }
 
+    public bool TryLaunchCurrentExecutable(string reason)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+
+        try
+        {
+            var executablePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(executablePath)) return false;
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = executablePath,
+                UseShellExecute = true,
+                Arguments = $"--relaunch-reason={reason}"
+            });
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string Quote(string path)
     {
         return path.Contains(' ') ? $"\"{path}\"" : path;
