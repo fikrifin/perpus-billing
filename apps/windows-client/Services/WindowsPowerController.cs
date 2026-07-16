@@ -7,6 +7,13 @@ namespace PerpusBilling.WindowsClient;
 
 public sealed class WindowsPowerController
 {
+    private readonly WindowsClientLogger? _logger;
+
+    public WindowsPowerController(WindowsClientLogger? logger = null)
+    {
+        _logger = logger;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool LockWorkStation();
 
@@ -43,6 +50,7 @@ public sealed class WindowsPowerController
     public void Lock()
     {
         if (!OperatingSystem.IsWindows()) return;
+        _logger?.Warn("Lock workstation requested");
         LockWorkStation();
     }
 
@@ -56,9 +64,10 @@ public sealed class WindowsPowerController
         RunShutdownCommand("/r /t 0");
     }
 
-    private static void RunShutdownCommand(string arguments)
+    private void RunShutdownCommand(string arguments)
     {
         if (!OperatingSystem.IsWindows()) return;
+        _logger?.Warn("Power command requested", ("command", "shutdown.exe"), ("arguments", arguments));
         Process.Start(new ProcessStartInfo
         {
             FileName = "shutdown.exe",

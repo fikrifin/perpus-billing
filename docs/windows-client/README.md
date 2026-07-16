@@ -12,6 +12,8 @@ Status saat ini: skeleton WPF/.NET 8 sudah dibuat untuk kontrak MVP:
 - Mini bar sekarang dibuat lebih kecil lagi dan punya tombol keluar cepat dengan konfirmasi.
 - Warning 60 detik terakhir tampil non-intrusive di mini top bar dengan state berkedip.
 - Menjalankan aksi akhir tepat saat waktu mencapai `00:00`.
+- Status offline/reconnect lebih jelas: status server menampilkan waktu heartbeat terakhir, mini bar berubah ke state offline, dan timer lokal tetap berjalan.
+- Logging lokal untuk event penting: startup, login gagal/berhasil, heartbeat offline/reconnect, command, stop session, final action, dan crash.
 - Menerima command dari backend melalui response heartbeat.
 - Acknowledge command.
 - Lock workstation, shutdown, atau restart via Windows API/command.
@@ -77,7 +79,18 @@ Dari root repo:
 dotnet build .\apps\windows-client\PerpusBilling.WindowsClient.csproj
 ```
 
-Publish single-folder app:
+Publish single-folder app via helper script:
+
+```powershell
+.\scripts\windows-client\Publish-WindowsClient.ps1 `
+  -ServerUrl "http://192.168.1.10:3478" `
+  -ComputerCode "PC-01" `
+  -SelfContained $true
+```
+
+Helper ini menjalankan `dotnet publish`, menulis `appsettings.json`, dan menyalin installer helper ke `dist\windows-client`.
+
+Publish manual:
 
 ```powershell
 dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Release -r win-x64 --self-contained false -o .\dist\windows-client
@@ -87,6 +100,23 @@ Kalau target PC tidak punya .NET Runtime, pakai self-contained:
 
 ```powershell
 dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Release -r win-x64 --self-contained true -o .\dist\windows-client
+```
+
+## Install Helper di PC Client
+
+Dari folder hasil publish di PC client:
+
+```powershell
+.\Install-WindowsClient.ps1 `
+  -InstallDir "C:\PerpusBilling\Client" `
+  -ServerUrl "http://192.168.1.10:3478" `
+  -ComputerCode "PC-01"
+```
+
+Untuk mendaftarkan startup `HKCU`, jalankan dari akun `PerpusClient` dan tambah:
+
+```powershell
+-RegisterStartup
 ```
 
 ## Run Test Manual
@@ -114,6 +144,7 @@ dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Relea
 - App juga bisa best-effort mendaftarkan auto-start di registry `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` jika `autoStartOnLogin=true`.
 - Karena auto-start ini per-user, registrasi awal sebaiknya dilakukan dari akun `PerpusClient`, bukan `PerpusAdmin`.
 - App sekarang punya recovery ringan: kalau crash saat masih di mode pre-login, executable akan mencoba relaunch sendiri dan menulis crash log ke `%LOCALAPPDATA%\\PerpusBilling\\WindowsClient\\logs`.
+- Log operasional harian ditulis ke `%LOCALAPPDATA%\\PerpusBilling\\WindowsClient\\logs\\client-YYYYMMDD.log` untuk troubleshooting client di lapangan.
 - Ini belum hardening kiosk penuh.
 
 ## Hardening Berikutnya
@@ -126,7 +157,8 @@ Sebelum pilot serius di perpustakaan:
 - Disable close/Alt+F4/Task Manager bypass semampunya atau pakai Windows Assigned Access/kiosk policy.
 - Installer sederhana untuk isi `serverUrl` + `computerCode`.
 - WebSocket realtime optional; heartbeat polling sudah cukup untuk MVP.
-- Logging lokal yang lebih lengkap untuk troubleshooting client.
+- Kirim/ambil log lokal dari PC client saat troubleshooting pilot.
+- Installer sederhana dengan wizard/server URL + computer code.
 
 Dokumen terkait:
 - [`docs/windows-client/hardening.md`](hardening.md)

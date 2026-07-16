@@ -104,14 +104,32 @@ Kalau nanti dipakai di lingkungan yang lebih ketat, auto-logon harus dipertimban
 
 ---
 
-## Langkah 3 — Install dan Publish Windows Client
+## Langkah 3 — Publish Windows Client
 
-Di mesin build/dev, publish app WPF untuk Windows.
+Di mesin build/dev Windows yang punya .NET SDK 8, publish app WPF dari root repo.
 
-Contoh command publish (sesuaikan path):
+### Opsi rekomendasi: pakai helper script
 
 ```powershell
-dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Release -r win-x64 --self-contained true
+.\scripts\windows-client\Publish-WindowsClient.ps1 `
+  -ServerUrl "http://192.168.1.10:3478" `
+  -ComputerCode "PC-01" `
+  -AdminExitCode "perpus-admin" `
+  -SelfContained $true
+```
+
+Hasil publish default:
+
+```text
+dist\windows-client\
+```
+
+Script ini juga menulis `appsettings.json` dan menyalin `Install-WindowsClient.ps1` ke folder publish.
+
+### Opsi manual
+
+```powershell
+dotnet publish .\apps\windows-client\PerpusBilling.WindowsClient.csproj -c Release -r win-x64 --self-contained true -o .\dist\windows-client
 ```
 
 Lalu copy hasil publish ke PC client, misalnya ke:
@@ -137,9 +155,25 @@ Jangan anggap auto-start ini global untuk semua akun. Untuk implementasi saat in
 
 ---
 
-## Langkah 4 — Isi Konfigurasi Client
+## Langkah 4 — Install dan Isi Konfigurasi Client
 
-Edit `appsettings.json` di PC client.
+Kalau folder hasil publish sudah dicopy ke PC client, buka PowerShell dari folder publish lalu jalankan:
+
+```powershell
+.\Install-WindowsClient.ps1 `
+  -InstallDir "C:\PerpusBilling\Client" `
+  -ServerUrl "http://192.168.1.10:3478" `
+  -ComputerCode "PC-01" `
+  -AdminExitCode "perpus-admin"
+```
+
+Script ini akan:
+
+- copy file client ke `InstallDir`
+- menulis `appsettings.json`
+- menampilkan lokasi executable dan log
+
+Kalau mau manual, edit `appsettings.json` di PC client.
 
 Contoh:
 
@@ -207,6 +241,18 @@ Untuk MVP/pilot awal, paling simpel:
 - biarkan app mendaftarkan auto-start registry
 - verifikasi hasilnya dengan sign out / logon ulang `PerpusClient`
 
+Atau dari akun `PerpusClient`, jalankan installer helper dengan startup eksplisit:
+
+```powershell
+.\Install-WindowsClient.ps1 `
+  -InstallDir "C:\PerpusBilling\Client" `
+  -ServerUrl "http://192.168.1.10:3478" `
+  -ComputerCode "PC-01" `
+  -RegisterStartup
+```
+
+Tetap ingat: `-RegisterStartup` menulis ke `HKCU`, jadi jalankan dari user Windows yang memang akan dipakai harian (`PerpusClient`).
+
 Jangan mendaftarkan startup pertama kali dari akun `PerpusAdmin`, karena nanti app bisa ikut jalan saat admin maintenance.
 
 ### Fallback kalau perlu
@@ -221,6 +267,19 @@ Setelah restart PC:
 - Windows login ke `PerpusClient`
 - app client otomatis terbuka fullscreen
 - taskbar Windows tidak terlihat selama client masih di lock screen
+
+### Lokasi log troubleshooting
+
+Kalau ada masalah di UTM/PC client, cek:
+
+```text
+%LOCALAPPDATA%\PerpusBilling\WindowsClient\logs\
+```
+
+File penting:
+
+- `client-YYYYMMDD.log` untuk log operasional
+- `crash-YYYYMMDD.log` untuk crash/unhandled exception
 
 ---
 

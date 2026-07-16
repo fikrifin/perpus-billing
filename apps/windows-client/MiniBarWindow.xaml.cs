@@ -46,6 +46,24 @@ public partial class MiniBarWindow : Window
         PositionAtTopCenter();
     }
 
+    public void ShowOffline(string computerCode, string username, string remainingText)
+    {
+        _blinkTimer.Stop();
+        MiniTitleText.Text = $"{computerCode} · offline";
+        MiniRemainingText.Text = remainingText;
+        RootBorder.ToolTip = $"Server offline · {username} · {computerCode}";
+        MiniExitButton.ToolTip = $"Akhiri session {username}";
+        RootBorder.Background = Brush("#FFF7ED");
+        RootBorder.BorderBrush = Brush("#FB923C");
+        StatusDot.Background = Brush("#FB923C");
+        MiniTitleText.Foreground = Brush("#9A3412");
+        MiniRemainingText.Foreground = Brush("#9A3412");
+        MiniExitButton.Background = Brush("#33FB923C");
+        MiniExitButton.Foreground = Brush("#9A3412");
+        MiniExitButton.BorderBrush = Brush("#66FB923C");
+        PositionAtTopCenter();
+    }
+
     public void StopWarning()
     {
         _blinkTimer.Stop();

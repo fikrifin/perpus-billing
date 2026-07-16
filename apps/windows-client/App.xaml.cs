@@ -10,6 +10,7 @@ public partial class App : Application
 {
     private MainWindow? _window;
     private readonly WindowsStartupManager _startupManager = new();
+    private readonly WindowsClientLogger _logger = new();
 
     private async void Application_Startup(object sender, StartupEventArgs e)
     {
@@ -17,11 +18,12 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
 
         var config = await ClientConfig.LoadAsync();
+        _logger.Info("Client starting", ("server", config.NormalizedServerUrl), ("computer", config.NormalizedComputerCode), ("version", config.ClientVersion));
         _startupManager.EnsureStartup(config.AutoStartOnLogin);
 
         var api = new PerpusApiClient(config);
-        var power = new WindowsPowerController();
-        _window = new MainWindow(config, api, power);
+        var power = new WindowsPowerController(_logger);
+        _window = new MainWindow(config, api, power, _logger);
         _window.Show();
     }
 
@@ -29,6 +31,7 @@ public partial class App : Application
     {
         var shouldRelaunch = ShouldRelaunchClient();
         TryWriteCrashLog("dispatcher", e.Exception);
+        _logger.Error("Unhandled dispatcher exception", e.Exception);
         if (shouldRelaunch)
         {
             _startupManager.TryLaunchCurrentExecutable("relaunch-after-dispatcher-crash");
@@ -42,6 +45,7 @@ public partial class App : Application
         var exception = e.ExceptionObject as Exception ?? new Exception("Unknown unhandled exception");
         var shouldRelaunch = ShouldRelaunchClient();
         TryWriteCrashLog("appdomain", exception);
+        _logger.Error("Unhandled appdomain exception", exception);
         if (shouldRelaunch)
         {
             _startupManager.TryLaunchCurrentExecutable("relaunch-after-appdomain-crash");

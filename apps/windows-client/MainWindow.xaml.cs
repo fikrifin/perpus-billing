@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     private readonly ClientConfig _config;
     private readonly PerpusApiClient _api;
     private readonly WindowsPowerController _power;
+    private readonly WindowsClientLogger _logger;
     private readonly DispatcherTimer _heartbeatTimer = new();
     private readonly DispatcherTimer _clockTimer = new();
     private readonly DispatcherTimer _guardTimer = new();
@@ -26,14 +27,17 @@ public partial class MainWindow : Window
     private SessionResponse? _activeSession;
     private bool _finalActionTriggered;
     private bool _remoteActionTriggered;
+    private bool _serverOffline;
+    private DateTimeOffset? _lastSuccessfulHeartbeatAt;
     private string _pendingAction = "shutdown";
 
-    public MainWindow(ClientConfig config, PerpusApiClient api, WindowsPowerController power)
+    public MainWindow(ClientConfig config, PerpusApiClient api, WindowsPowerController power, WindowsClientLogger logger)
     {
         InitializeComponent();
         _config = config;
         _api = api;
         _power = power;
+        _logger = logger;
 
         _power.MakeWindowKiosk(this);
         ComputerCodeText.Text = _config.NormalizedComputerCode;
@@ -67,8 +71,7 @@ public partial class MainWindow : Window
             ApplySettings();
 
             var heartbeat = await _api.HeartbeatAsync();
-            ServerStatusText.Text = $"Online · {heartbeat.Computer?.Status ?? "unknown"}";
-            ErrorText.Text = "";
+            MarkServerOnline(heartbeat);
 
             if (heartbeat.ActiveSession is not null)
             {
@@ -76,6 +79,7 @@ public partial class MainWindow : Window
             }
             else if (_activeSession is not null && !_finalActionTriggered)
             {
+                _logger.Warn("Server reports no active session; returning to login", ("sessionId", _activeSession.Id));
                 ResetToLogin("Session sudah tidak aktif. Komputer kembali terkunci.");
             }
 
@@ -86,8 +90,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ServerStatusText.Text = "Offline";
-            ErrorText.Text = ex.Message;
+            MarkServerOffline(ex);
         }
         finally
         {
@@ -112,6 +115,44 @@ public partial class MainWindow : Window
         _heartbeatTimer.Start();
     }
 
+    private void MarkServerOnline(HeartbeatResponse heartbeat)
+    {
+        _lastSuccessfulHeartbeatAt = DateTimeOffset.Now;
+        if (_serverOffline)
+        {
+            _logger.Info("Server connection restored", ("computerStatus", heartbeat.Computer?.Status ?? "unknown"));
+        }
+
+        _serverOffline = false;
+        ServerStatusText.Text = $"Online · {heartbeat.Computer?.Status ?? "unknown"}";
+        ErrorText.Text = "";
+        if (_activeSession is not null)
+        {
+            MessageText.Text = "Session aktif. Koneksi server normal.";
+        }
+    }
+
+    private void MarkServerOffline(Exception ex)
+    {
+        if (!_serverOffline)
+        {
+            _logger.Warn("Server connection lost", ("message", ex.Message));
+        }
+
+        _serverOffline = true;
+        var lastSeen = _lastSuccessfulHeartbeatAt is null
+            ? "belum pernah berhasil"
+            : $"terakhir online {_lastSuccessfulHeartbeatAt:HH:mm:ss}";
+        ServerStatusText.Text = $"Offline · mencoba konek ulang ({lastSeen})";
+        ErrorText.Text = ex.Message;
+
+        if (_activeSession is not null && !_finalActionTriggered && !_remoteActionTriggered)
+        {
+            MessageText.Text = "Koneksi server terputus. Timer lokal tetap berjalan, client akan reconnect otomatis.";
+            _miniBar.ShowOffline(_activeSession.ComputerCode, _activeSession.Username, RemainingText.Text);
+        }
+    }
+
     private async void LoginButton_Click(object sender, RoutedEventArgs e)
     {
         ErrorText.Text = "";
@@ -121,10 +162,12 @@ public partial class MainWindow : Window
         try
         {
             var session = await _api.StartSessionAsync(UsernameBox.Text.Trim(), PasswordBox.Password);
+            _logger.Info("Session started", ("sessionId", session.Id), ("username", session.Username), ("computer", session.ComputerCode));
             ApplySession(session, "Session aktif. Komputer boleh digunakan.");
         }
         catch (Exception ex)
         {
+            _logger.Warn("Login failed", ("username", UsernameBox.Text.Trim()), ("message", ex.Message));
             ErrorText.Text = ex.Message;
             MessageText.Text = "Login gagal. Hubungi operator jika akun tidak valid.";
         }
@@ -158,6 +201,7 @@ public partial class MainWindow : Window
     private void ApplySession(SessionResponse session, string message)
     {
         _activeSession = session;
+        _logger.Info("Apply active session", ("sessionId", session.Id), ("username", session.Username), ("endTime", session.EndTime));
         _finalActionTriggered = false;
         _remoteActionTriggered = false;
         _pendingAction = NormalizeAction(_settings.DefaultExpireAction);
@@ -193,7 +237,14 @@ public partial class MainWindow : Window
             : $"{remaining.Minutes:00}:{remaining.Seconds:00}";
 
         RemainingText.Text = remainingText;
-        _miniBar.UpdateDisplay(_activeSession.ComputerCode, _activeSession.Username, remainingText);
+        if (_serverOffline)
+        {
+            _miniBar.ShowOffline(_activeSession.ComputerCode, _activeSession.Username, remainingText);
+        }
+        else
+        {
+            _miniBar.UpdateDisplay(_activeSession.ComputerCode, _activeSession.Username, remainingText);
+        }
 
         var total = Math.Max(1, (_activeSession.EndTime - _activeSession.StartTime).TotalSeconds);
         var used = Math.Clamp((now - _activeSession.StartTime).TotalSeconds, 0, total);
@@ -218,6 +269,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            _logger.Info("Command received", ("commandId", command.Id), ("command", command.Command), ("note", command.Note));
             switch (command.Command)
             {
                 case "lock":
@@ -236,9 +288,11 @@ public partial class MainWindow : Window
                     break;
             }
             await _api.AckCommandAsync(command.Id, true, "Handled by Windows client");
+            _logger.Info("Command acknowledged", ("commandId", command.Id), ("command", command.Command));
         }
         catch (Exception ex)
         {
+            _logger.Error("Command handling failed", ex, ("commandId", command.Id), ("command", command.Command));
             await _api.AckCommandAsync(command.Id, false, ex.Message);
         }
     }
@@ -260,6 +314,7 @@ public partial class MainWindow : Window
     private void ExecuteImmediatePowerAction(string action, string message)
     {
         _remoteActionTriggered = true;
+        _logger.Warn("Immediate power action triggered", ("action", action), ("sessionId", _activeSession?.Id), ("message", message));
         if (_activeSession is not null)
         {
             ShowMiniBar();
@@ -286,6 +341,7 @@ public partial class MainWindow : Window
         if (_finalActionTriggered) return;
         _finalActionTriggered = true;
         _pendingAction = action;
+        _logger.Warn("Final action triggered", ("action", action), ("sessionId", _activeSession?.Id), ("message", message));
 
         if (action == "lock")
         {
@@ -318,12 +374,15 @@ public partial class MainWindow : Window
     private async Task StopSessionToLoginAsync()
     {
         if (_activeSession is null) return;
+        var sessionId = _activeSession.Id;
         try
         {
-            await _api.StopSessionAsync(_activeSession.Id, "User logout from Windows client");
+            await _api.StopSessionAsync(sessionId, "User logout from Windows client");
+            _logger.Info("Session stopped by user", ("sessionId", sessionId));
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.Warn("Stop session failed; locking local client anyway", ("sessionId", sessionId), ("message", ex.Message));
             // Tetap kunci lokal walau server gagal, supaya client tidak bebas terbuka.
         }
         ResetToLogin("Session selesai. Hubungi operator untuk isi ulang jika waktu sudah habis.");
@@ -349,9 +408,11 @@ public partial class MainWindow : Window
         try
         {
             await _api.StopSessionAsync(_activeSession.Id, "User exit from mini bar and shutdown Windows client");
+            _logger.Info("Session stopped from mini bar", ("sessionId", _activeSession.Id));
         }
         catch (Exception ex)
         {
+            _logger.Warn("Mini bar exit failed to stop session", ("sessionId", _activeSession.Id), ("message", ex.Message));
             MessageBox.Show(
                 $"Gagal menyimpan status session ke server:\n{ex.Message}\n\nShutdown dibatalkan agar waktu user tidak hilang.",
                 "Gagal Menyimpan Session",
@@ -361,6 +422,7 @@ public partial class MainWindow : Window
         }
 
         _remoteActionTriggered = true;
+        _logger.Warn("Mini bar user exit requested shutdown", ("sessionId", _activeSession.Id), ("username", username));
         _miniBar.ShowWarning(_activeSession.ComputerCode, _activeSession.Username, "shutdown", "0");
         _power.Shutdown();
     }
@@ -395,6 +457,7 @@ public partial class MainWindow : Window
                 return;
             }
 
+            _logger.Warn("Admin exit accepted");
             await ExitToWindowsAsync();
         }
         finally
@@ -463,6 +526,7 @@ public partial class MainWindow : Window
 
     private void ResetToLogin(string message)
     {
+        _logger.Info("Reset to login", ("message", message));
         _activeSession = null;
         _finalActionTriggered = false;
         _remoteActionTriggered = false;
