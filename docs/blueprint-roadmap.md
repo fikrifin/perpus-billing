@@ -548,6 +548,13 @@ Bukan lagi tahap proof-of-concept murni.
 - log file rotasi sederhana
 - easier diagnosis saat client offline/error
 
+### Status
+- startup integration sudah dibuat via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- fallback startup shortcut sudah ditambahkan untuk kasus registry Run gagal/diblok policy
+- config publish/install helper sudah ikut menulis toggle hardening/startup/recovery
+- event penting sudah masuk log lokal, termasuk hasil startup registration dan crash pre-login
+- crash saat pre-login mencoba relaunch executable yang sama sebagai recovery ringan
+
 ---
 
 ## Sprint E — Installer & Pairing Flow
@@ -557,7 +564,7 @@ Bukan lagi tahap proof-of-concept murni.
 
 ### Output
 - installer / setup wizard sederhana
-- input `serverUrl` + `computerCode`
+- input `serverUrl` + `computerCode` lewat installer atau panel setup first-run dengan simpan config, tes koneksi ulang, dan reset default
 - validasi koneksi awal ke backend
 
 ---

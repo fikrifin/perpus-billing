@@ -46,12 +46,21 @@ Yang bisa dilakukan langsung di aplikasi:
 Sudah ada implementasi dasar:
 
 - main window fullscreen/topmost
+- main window disembunyikan dari taskbar saat mode kiosk/pre-login
 - attempt close ditahan
 - attempt minimize ditahan pada mode belum-login
 - re-activate window saat kehilangan fokus pada mode belum-login
 - blok shortcut dasar seperti `Alt+F4` pada mode belum-login
-- register hotkey untuk menahan `Alt+Tab` dan `Alt+Esc` saat belum login
+- register hotkey untuk menahan `Alt+Tab`, `Alt+Esc`, dan tombol `Win` saat belum login
 - taskbar / shell Windows disembunyikan saat belum login, lalu dimunculkan lagi saat session aktif atau admin exit
+- cursor disembunyikan saat belum login, lalu dimunculkan lagi sesudah session aktif atau admin exit
+- guard timer sekarang lebih agresif untuk reclaim focus dan cek foreground window
+- best-effort kill process terlarang saat mode belum-login agar escape lewat Task Manager makin sulit
+- daftar process guard bisa diatur via `blockedProcessNames`, default `Taskmgr`
+- guard ini sekarang bisa di-toggle via `enableTaskManagerGuard` di `appsettings.json`
+- session visibility sekarang bisa dipilih via `keepShellHiddenDuringSession` kalau nanti ingin mode logged-in yang lebih kiosk
+- startup resilience sekarang punya fallback tambahan via shortcut Startup folder user
+- admin exit bisa best-effort memulihkan `explorer.exe` lagi via config
 - saat session aktif, main window di-hide
 - mini top bar always-on-top
 - mini bar punya tombol keluar cepat, tapi tetap pakai konfirmasi dulu sebelum stop session + shutdown
@@ -59,7 +68,7 @@ Sudah ada implementasi dasar:
 
 ### Keterbatasan
 
-Ini **belum cukup** untuk melawan semua escape path seperti Task Manager, `Ctrl+Alt+Del`, atau shortcut sistem yang ditangani langsung oleh Windows. Jadi shell hide + hotkey blocking ini adalah lapisan awal, bukan proteksi final sendirian.
+Ini **belum cukup** untuk melawan semua escape path seperti `Ctrl+Alt+Del`, Secure Attention Sequence, atau shortcut sistem yang ditangani langsung oleh Windows. Best-effort kill `Taskmgr.exe` hanya lapisan tambahan, bukan pengganti policy OS. Jadi shell hide + hotkey blocking + process guard ini tetap lapisan awal, bukan proteksi final sendirian.
 
 ---
 
@@ -81,6 +90,8 @@ Kalau user duduk di akun admin, semua proteksi app jadi jauh lebih lemah.
 ---
 
 ## Layer 3 — Batasi / Disable Task Manager
+
+Untuk pilot, jangan berhenti di “Task Manager dibatasi”. Pastikan juga ada checklist Windows policy yang mencakup shell tools lain seperti `cmd`, PowerShell, Run dialog, Registry Editor, dan jalur sign out/switch user.
 
 Ini salah satu proteksi paling penting untuk MVP.
 
@@ -192,6 +203,13 @@ Kalau user bisa kill process berulang atau mematikan helper/watchdog juga, tetap
 ---
 
 ## Checklist Implementasi Lapangan
+
+Tambahan praktik yang disarankan:
+
+- isi bypass test matrix per PC client
+- dokumentasikan policy apa saja yang benar-benar berhasil diterapkan di mesin itu
+- bedakan mana proteksi app-level dan mana proteksi OS-level
+
 
 ### Minimum layak test
 

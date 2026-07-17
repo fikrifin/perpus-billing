@@ -7,18 +7,21 @@ namespace PerpusBilling.WindowsClient;
 
 public sealed class PerpusApiClient
 {
-    private readonly HttpClient _http;
-    private readonly ClientConfig _config;
+    private HttpClient _http;
+    private ClientConfig _config;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
     public PerpusApiClient(ClientConfig config)
     {
         _config = config;
-        _http = new HttpClient
-        {
-            BaseAddress = new Uri(config.NormalizedServerUrl),
-            Timeout = TimeSpan.FromSeconds(8)
-        };
+        _http = CreateHttpClient(config);
+    }
+
+    public void UpdateConfig(ClientConfig config)
+    {
+        _config = config;
+        _http.Dispose();
+        _http = CreateHttpClient(config);
     }
 
     public async Task<SettingsResponse> GetSettingsAsync(CancellationToken cancellationToken = default)
@@ -80,6 +83,15 @@ public sealed class PerpusApiClient
 
         if (string.IsNullOrWhiteSpace(raw)) return default;
         return JsonSerializer.Deserialize<T>(raw, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    }
+
+    private static HttpClient CreateHttpClient(ClientConfig config)
+    {
+        return new HttpClient
+        {
+            BaseAddress = new Uri(config.NormalizedServerUrl),
+            Timeout = TimeSpan.FromSeconds(8)
+        };
     }
 
     private static string? ExtractError(string raw)

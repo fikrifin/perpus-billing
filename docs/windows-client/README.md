@@ -4,7 +4,7 @@ Target: client native Windows untuk PC publik perpustakaan.
 
 Status saat ini: skeleton WPF/.NET 8 sudah dibuat untuk kontrak MVP:
 
-- Konfigurasi `serverUrl` dan `computerCode` via `appsettings.json`.
+- Konfigurasi `serverUrl` dan `computerCode` bisa via `appsettings.json` atau panel setup first-run dengan simpan config, tes koneksi ulang, dan reset default di aplikasi.
 - Heartbeat ke backend.
 - Login user dengan username/password.
 - Menampilkan session aktif dan countdown.
@@ -63,13 +63,23 @@ Contoh untuk LAN:
   "computerCode": "PC-01",
   "clientVersion": "windows-client-0.1.0",
   "heartbeatFallbackSeconds": 5,
-  "autoStartOnLogin": true
+  "autoStartOnLogin": true,
+  "enableTaskManagerGuard": true,
+  "blockedProcessNames": ["Taskmgr"],
+  "keepShellHiddenDuringSession": false,
+  "enableStartupShortcutFallback": true,
+  "enableExplorerRecoveryOnAdminExit": true
 }
 ```
 
 - `serverUrl`: IP PC operator/server.
 - `computerCode`: kode komputer sesuai dashboard admin, misal `PC-01`.
 - `autoStartOnLogin`: jika `true`, app akan best-effort mendaftarkan dirinya ke startup user Windows saat app dijalankan. Karena registrasinya via `HKCU`, behavior ini bersifat per-user, bukan global semua akun Windows.
+- `enableTaskManagerGuard`: jika `true`, app akan best-effort menutup process yang masuk daftar `blockedProcessNames` saat mode pre-login.
+- `blockedProcessNames`: daftar process tanpa/atau dengan `.exe` yang akan ditutup saat pre-login, default `Taskmgr`. Ini lapisan tambahan, bukan pengganti policy Windows.
+- `keepShellHiddenDuringSession`: jika `true`, shell/taskbar bisa tetap disembunyikan bahkan setelah user session aktif.
+- `enableStartupShortcutFallback`: jika `true`, app akan mencoba fallback startup lewat shortcut di Startup folder kalau registry `Run` gagal.
+- `enableExplorerRecoveryOnAdminExit`: jika `true`, app akan best-effort menjalankan `explorer.exe` saat admin exit supaya desktop Windows balik normal.
 
 ## Build
 
@@ -123,8 +133,8 @@ Untuk mendaftarkan startup `HKCU`, jalankan dari akun `PerpusClient` dan tambah:
 
 1. Jalankan backend di PC operator/server.
 2. Pastikan komputer client sudah terdaftar di admin dashboard, contoh `PC-01`.
-3. Edit `appsettings.json` agar `serverUrl` mengarah ke IP server.
-4. Jalankan `PerpusBilling.WindowsClient.exe`.
+3. Jalankan `PerpusBilling.WindowsClient.exe`. Kalau config masih default/belum valid, isi panel setup dulu.
+4. Pastikan `serverUrl` mengarah ke IP server dan `computerCode` sesuai data komputer.
 5. Pastikan status server berubah online dan PC muncul heartbeat di dashboard.
 6. Kalau `autoStartOnLogin=true`, tutup-buka/login ulang Windows lalu cek app muncul otomatis.
 7. Login memakai user demo atau user yang dibuat operator.
@@ -142,10 +152,12 @@ Untuk mendaftarkan startup `HKCU`, jalankan dari akun `PerpusClient` dan tambah:
 - Mini bar menyediakan tombol keluar cepat. Saat ditekan, user diminta konfirmasi dulu. Jika dikonfirmasi, client akan stop session ke server dulu agar waktu/user state tersimpan, lalu komputer shutdown.
 - Pada mode belum-login sekarang ditambah hardening ringan: best-effort tahan minimize, tahan close normal, re-activate window saat kehilangan fokus, blok `Alt+F4`, tahan `Alt+Tab` / `Alt+Esc`, dan sembunyikan taskbar/shell Windows.
 - App juga bisa best-effort mendaftarkan auto-start di registry `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` jika `autoStartOnLogin=true`.
-- Karena auto-start ini per-user, registrasi awal sebaiknya dilakukan dari akun `PerpusClient`, bukan `PerpusAdmin`.
+- Kalau registry `Run` gagal atau diblok policy, app sekarang bisa fallback membuat shortcut startup di folder Startup user bila `enableStartupShortcutFallback=true`.
+- Karena auto-start ini tetap per-user, registrasi awal sebaiknya dilakukan dari akun `PerpusClient`, bukan `PerpusAdmin`.
 - App sekarang punya recovery ringan: kalau crash saat masih di mode pre-login, executable akan mencoba relaunch sendiri dan menulis crash log ke `%LOCALAPPDATA%\\PerpusBilling\\WindowsClient\\logs`.
-- Log operasional harian ditulis ke `%LOCALAPPDATA%\\PerpusBilling\\WindowsClient\\logs\\client-YYYYMMDD.log` untuk troubleshooting client di lapangan.
-- Ini belum hardening kiosk penuh.
+- Saat admin exit dipakai, app sekarang bisa best-effort memulihkan `explorer.exe` lagi lewat config `enableExplorerRecoveryOnAdminExit`.
+- Log operasional harian ditulis ke `%LOCALAPPDATA%\\PerpusBilling\\WindowsClient\\logs\\client-YYYYMMDD.log` untuk troubleshooting client di lapangan, termasuk hasil evaluasi startup registration/fallback.
+- Ini belum hardening kiosk penuh, tapi mode pre-login sekarang lebih rapat: hidden from taskbar, reclaim foreground lebih agresif, startup fallback tambahan, dan opsi recovery explorer saat admin exit.
 
 ## Hardening Berikutnya
 
@@ -155,7 +167,7 @@ Sebelum pilot serius di perpustakaan:
 - Auto-start saat Windows boot.
 - Jalankan sebagai Windows service/helper untuk heartbeat tetap hidup.
 - Disable close/Alt+F4/Task Manager bypass semampunya atau pakai Windows Assigned Access/kiosk policy.
-- Installer sederhana untuk isi `serverUrl` + `computerCode`.
+- Panel setup first-run untuk isi `serverUrl` + `computerCode` sudah mulai ada; installer helper tinggal melengkapi flow deploy.
 - WebSocket realtime optional; heartbeat polling sudah cukup untuk MVP.
 - Kirim/ambil log lokal dari PC client saat troubleshooting pilot.
 - Installer sederhana dengan wizard/server URL + computer code.

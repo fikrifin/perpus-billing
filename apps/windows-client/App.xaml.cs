@@ -19,7 +19,13 @@ public partial class App : Application
 
         var config = await ClientConfig.LoadAsync();
         _logger.Info("Client starting", ("server", config.NormalizedServerUrl), ("computer", config.NormalizedComputerCode), ("version", config.ClientVersion));
-        _startupManager.EnsureStartup(config.AutoStartOnLogin);
+        var startupRegistered = _startupManager.EnsureStartup(config.AutoStartOnLogin, config.EnableStartupShortcutFallback);
+        _logger.Info("Startup registration evaluated",
+            ("enabled", config.AutoStartOnLogin),
+            ("registered", startupRegistered),
+            ("shortcutFallback", config.EnableStartupShortcutFallback),
+            ("registryCommand", _startupManager.GetRegisteredCommand() ?? "none"),
+            ("startupShortcut", _startupManager.GetStartupFolderShortcutPath() ?? "none"));
 
         var api = new PerpusApiClient(config);
         var power = new WindowsPowerController(_logger);

@@ -222,6 +222,8 @@ Untuk tahap pilot awal, minimal:
 - [ ] app auto-start saat logon
 - [ ] Task Manager dibatasi
 - [ ] admin password kuat
+- [ ] `cmd`, PowerShell, Registry Editor, dan Run dialog dibatasi untuk flow publik
+- [ ] hasil bypass test dicatat per mesin
 
 ---
 
@@ -234,6 +236,7 @@ Untuk tahap lebih matang:
 - [ ] recovery auto-relaunch diuji di mode pre-login
 - [ ] local logging tersedia
 - [ ] SOP maintenance ditulis untuk operator/teknisi
+- [ ] ada checklist policy Windows baku yang dipakai konsisten di tiap PC client
 
 ---
 

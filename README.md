@@ -139,3 +139,4 @@ Progress terbaru di native client:
 - skeleton WPF/.NET 8 sudah jalan
 - validasi awal berhasil di UTM + Windows 11
 - Sprint 1 mulai mengubah flow countdown agar 60 detik terakhir tampil sebelum waktu habis, lalu aksi akhir jalan tepat saat waktu mencapai `00:00`
+- Sprint hardening Windows client sudah lanjut: guard pre-login lebih agresif, Task Manager guard configurable, startup fallback via Startup folder, crash relaunch ringan, dan script publish/install ikut menulis config hardening.

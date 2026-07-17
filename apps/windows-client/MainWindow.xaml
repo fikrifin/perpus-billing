@@ -47,7 +47,24 @@
               <TextBlock x:Name="AdminExitHintText" Foreground="#7a5a00" Margin="0,12,0,0" TextWrapping="Wrap" />
             </StackPanel>
           </Expander>
-          <TextBlock x:Name="ErrorText" Foreground="#b42318" Margin="0,16,0,0" TextWrapping="Wrap" />
+          <Border x:Name="SetupPanel" Margin="0,16,0,0" Padding="14" CornerRadius="16" Background="#fff7db" BorderBrush="#e6c65c" BorderThickness="1" Visibility="Collapsed">
+            <StackPanel>
+              <TextBlock Text="Setup client" FontSize="18" FontWeight="Bold" Foreground="#7a5a00" />
+              <TextBlock x:Name="SetupStatusText" Margin="0,8,0,6" Foreground="#7a5a00" TextWrapping="Wrap" />
+              <TextBlock x:Name="SetupConnectionResultText" Margin="0,0,0,10" Foreground="#1f4b38" TextWrapping="Wrap" Visibility="Collapsed" />
+              <TextBlock Text="Server URL" FontWeight="SemiBold" />
+              <TextBox x:Name="ServerUrlBox" Height="40" Margin="0,6,0,12" FontSize="15" />
+              <TextBlock Text="Kode komputer" FontWeight="SemiBold" />
+              <TextBox x:Name="ComputerCodeBox" Height="40" Margin="0,6,0,12" FontSize="15" />
+              <WrapPanel Margin="0,2,0,0">
+                <Button x:Name="SaveSetupButton" Content="Simpan Konfigurasi" Width="180" Height="40" Click="SaveSetupButton_Click" Background="#8a5a00" Foreground="White" />
+                <Button x:Name="RetryConnectionButton" Content="Coba Koneksi Ulang" Width="160" Height="40" Margin="12,0,0,0" Click="RetryConnectionButton_Click" Background="#eef4ef" Foreground="#1f4b38" />
+                <Button x:Name="UseDefaultSetupButton" Content="Reset Default" Width="130" Height="40" Margin="12,0,0,0" Click="UseDefaultSetupButton_Click" Background="#f5efe0" Foreground="#7a5a00" />
+              </WrapPanel>
+            </StackPanel>
+          </Border>
+          <TextBlock x:Name="HardeningStatusText" Foreground="#7a5a00" Margin="0,16,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+          <TextBlock x:Name="ErrorText" Foreground="#b42318" Margin="0,12,0,0" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
 

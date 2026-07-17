@@ -13,23 +13,29 @@ public partial class MainWindow : Window
 {
     private const int WM_HOTKEY = 0x0312;
 
-    private readonly ClientConfig _config;
+    private ClientConfig _config;
     private readonly PerpusApiClient _api;
     private readonly WindowsPowerController _power;
     private readonly WindowsClientLogger _logger;
     private readonly DispatcherTimer _heartbeatTimer = new();
     private readonly DispatcherTimer _clockTimer = new();
     private readonly DispatcherTimer _guardTimer = new();
+    private readonly DispatcherTimer _blockedProcessTimer = new();
     private readonly MiniBarWindow _miniBar = new();
 
     private SettingsResponse _settings = new();
     private bool _adminExitUnlocked;
+    private bool _preLoginGuardStateLogged;
+    private bool _mainWindowTemporarilyVisibleForWarning;
     private SessionResponse? _activeSession;
     private bool _finalActionTriggered;
     private bool _remoteActionTriggered;
     private bool _serverOffline;
     private DateTimeOffset? _lastSuccessfulHeartbeatAt;
     private string _pendingAction = "shutdown";
+    private bool _setupModeActive;
+    private string _lastSetupStatusMessage = string.Empty;
+    private SetupState _setupState = new();
 
     public MainWindow(ClientConfig config, PerpusApiClient api, WindowsPowerController power, WindowsClientLogger logger)
     {
@@ -40,14 +46,15 @@ public partial class MainWindow : Window
         _logger = logger;
 
         _power.MakeWindowKiosk(this);
-        ComputerCodeText.Text = _config.NormalizedComputerCode;
-        FooterText.Text = $"Server: {_config.NormalizedServerUrl} · Client: {_config.ClientVersion}";
+        SyncConfigDisplay();
 
         _heartbeatTimer.Tick += async (_, _) => await HeartbeatAsync();
         _clockTimer.Interval = TimeSpan.FromSeconds(1);
         _clockTimer.Tick += (_, _) => RefreshSessionClock();
-        _guardTimer.Interval = TimeSpan.FromMilliseconds(800);
+        _guardTimer.Interval = TimeSpan.FromMilliseconds(400);
         _guardTimer.Tick += (_, _) => EnforcePreLoginGuard();
+        _blockedProcessTimer.Interval = TimeSpan.FromSeconds(2);
+        _blockedProcessTimer.Tick += (_, _) => EnforceBlockedProcesses();
         _miniBar.ExitRequested += MiniBar_ExitRequested;
 
         PreviewKeyDown += MainWindow_PreviewKeyDown;
@@ -58,13 +65,26 @@ public partial class MainWindow : Window
         {
             _clockTimer.Start();
             _guardTimer.Start();
+            _blockedProcessTimer.Start();
+            HardeningStatusText.Text = _power.CreateHardeningSummary();
+            HardeningStatusText.Visibility = Visibility.Visible;
+            EvaluateSetupState();
             EnforcePreLoginGuard();
-            await HeartbeatAsync();
+            if (!_setupModeActive)
+            {
+                await HeartbeatAsync();
+            }
         };
     }
 
     private async Task HeartbeatAsync()
     {
+        if (_setupModeActive)
+        {
+            ScheduleNextHeartbeat();
+            return;
+        }
+
         try
         {
             _settings = await _api.GetSettingsAsync();
@@ -103,8 +123,57 @@ public partial class MainWindow : Window
         BusinessNameText.Text = _settings.BusinessName;
         AdminExitHintText.Text = _config.AutoStartOnLogin
             ? "Mode auto-start aktif. Masukkan kode admin untuk menutup aplikasi lalu kembali ke desktop Windows."
-            : "Masukkan kode admin untuk menutup aplikasi client ini."
-            ;
+            : "Masukkan kode admin untuk menutup aplikasi client ini.";
+    }
+
+    private void SyncConfigDisplay()
+    {
+        ComputerCodeText.Text = _config.NormalizedComputerCode;
+        FooterText.Text = $"Server: {_config.NormalizedServerUrl} · Client: {_config.ClientVersion}";
+        if (ServerUrlBox is not null) ServerUrlBox.Text = _config.NormalizedServerUrl;
+        if (ComputerCodeBox is not null) ComputerCodeBox.Text = _config.NormalizedComputerCode;
+    }
+
+    private void EvaluateSetupState()
+    {
+        var state = SetupValidator.Evaluate(_config);
+        var placeholderCode = ClientConfig.LooksLikePlaceholderComputerCode(_config.ComputerCode);
+        _setupModeActive = state.NeedsConfiguration || placeholderCode;
+
+        if (placeholderCode && !state.Issues.Contains("Kode komputer belum valid."))
+        {
+            state = state with
+            {
+                NeedsConfiguration = true,
+                Issues = state.Issues.Concat(["Kode komputer masih default. Ganti sesuai data komputer di server."]).ToArray()
+            };
+        }
+
+        _setupState = state;
+        SetupPanel.Visibility = _setupModeActive ? Visibility.Visible : Visibility.Collapsed;
+        SetupStatusText.Text = _setupModeActive
+            ? state.Summary
+            : "Konfigurasi client sudah siap. Kalau pindah PC/server, update di panel setup ini atau lewat appsettings.json.";
+
+        if (_setupModeActive)
+        {
+            ServerStatusText.Text = "Butuh konfigurasi";
+            MessageText.Text = "Isi server URL dan kode komputer dulu sebelum client dipakai user.";
+            ErrorText.Text = string.Empty;
+            LoginButton.IsEnabled = false;
+            SyncConfigDisplay();
+            SetSetupConnectionResult(_lastSetupStatusMessage, false, !string.IsNullOrWhiteSpace(_lastSetupStatusMessage));
+        }
+        else
+        {
+            LoginButton.IsEnabled = true;
+            if (!string.IsNullOrWhiteSpace(_lastSetupStatusMessage))
+            {
+                SetSetupConnectionResult(_lastSetupStatusMessage, true, true);
+            }
+        }
+
+        RetryConnectionButton.IsEnabled = _setupState.CanTryConnection;
     }
 
     private void ScheduleNextHeartbeat()
@@ -124,6 +193,11 @@ public partial class MainWindow : Window
         }
 
         _serverOffline = false;
+        _setupModeActive = false;
+        _lastSetupStatusMessage = $"Koneksi berhasil ke { _config.NormalizedServerUrl } untuk komputer { _config.NormalizedComputerCode }.";
+        SetupPanel.Visibility = Visibility.Collapsed;
+        LoginButton.IsEnabled = true;
+        SetSetupConnectionResult(_lastSetupStatusMessage, true, false);
         ServerStatusText.Text = $"Online · {heartbeat.Computer?.Status ?? "unknown"}";
         ErrorText.Text = "";
         if (_activeSession is not null)
@@ -140,6 +214,16 @@ public partial class MainWindow : Window
         }
 
         _serverOffline = true;
+        if (_setupModeActive)
+        {
+            _lastSetupStatusMessage = ex.Message;
+            ServerStatusText.Text = "Setup / koneksi belum siap";
+            ErrorText.Text = ex.Message;
+            MessageText.Text = "Simpan konfigurasi yang benar lalu coba koneksi ulang.";
+            SetSetupConnectionResult($"Koneksi gagal: {ex.Message}", false, true);
+            return;
+        }
+
         var lastSeen = _lastSuccessfulHeartbeatAt is null
             ? "belum pernah berhasil"
             : $"terakhir online {_lastSuccessfulHeartbeatAt:HH:mm:ss}";
@@ -212,7 +296,7 @@ public partial class MainWindow : Window
         MessageText.Text = message;
         ShowMiniBar();
         _miniBar.StopWarning();
-        RestorePostLoginShell();
+        ApplyPostLoginVisibilityPolicy();
         HideMainWindowForActiveSession();
         RefreshSessionClock();
     }
@@ -319,6 +403,11 @@ public partial class MainWindow : Window
         {
             ShowMiniBar();
             _miniBar.ShowWarning(_activeSession.ComputerCode, _activeSession.Username, action, "0");
+            if (_config.KeepShellHiddenDuringSession)
+            {
+                _mainWindowTemporarilyVisibleForWarning = true;
+                ShowMainWindow();
+            }
         }
         else
         {
@@ -354,6 +443,11 @@ public partial class MainWindow : Window
         {
             ShowMiniBar();
             _miniBar.ShowWarning(_activeSession.ComputerCode, _activeSession.Username, action, "0");
+            if (_config.KeepShellHiddenDuringSession)
+            {
+                _mainWindowTemporarilyVisibleForWarning = true;
+                ShowMainWindow();
+            }
         }
         else
         {
@@ -475,11 +569,12 @@ public partial class MainWindow : Window
         _heartbeatTimer.Stop();
         _clockTimer.Stop();
         _guardTimer.Stop();
+        _blockedProcessTimer.Stop();
         Deactivated -= MainWindow_Deactivated;
         PreviewKeyDown -= MainWindow_PreviewKeyDown;
         StateChanged -= Window_StateChanged;
         Closing -= Window_Closing;
-        RestorePostLoginShell();
+        RestorePostLoginShell(forceShowShell: true);
         _miniBar.ExitRequested -= MiniBar_ExitRequested;
         if (_miniBar.IsVisible)
         {
@@ -498,17 +593,20 @@ public partial class MainWindow : Window
             source.RemoveHook(WndProc);
         }
 
-        try
+        if (_config.EnableExplorerRecoveryOnAdminExit)
         {
-            Process.Start(new ProcessStartInfo
+            try
             {
-                FileName = "explorer.exe",
-                UseShellExecute = true
-            });
-        }
-        catch
-        {
-            // best effort; kalau explorer gagal, tetap lanjut tutup app
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    UseShellExecute = true
+                });
+            }
+            catch
+            {
+                // best effort; kalau explorer gagal, tetap lanjut tutup app
+            }
         }
 
         await Dispatcher.InvokeAsync(() =>
@@ -530,8 +628,11 @@ public partial class MainWindow : Window
         _activeSession = null;
         _finalActionTriggered = false;
         _remoteActionTriggered = false;
+        _mainWindowTemporarilyVisibleForWarning = false;
+        _preLoginGuardStateLogged = false;
         ApplyPreLoginHardening();
         ShowMainWindow();
+        HardeningStatusText.Visibility = Visibility.Visible;
         _miniBar.StopWarning();
         HideMiniBar();
         SessionPanel.Visibility = Visibility.Collapsed;
@@ -568,6 +669,12 @@ public partial class MainWindow : Window
 
     private void HideMainWindowForActiveSession()
     {
+        if (_config.KeepShellHiddenDuringSession && _mainWindowTemporarilyVisibleForWarning)
+        {
+            return;
+        }
+
+        ShowInTaskbar = false;
         Hide();
     }
 
@@ -577,10 +684,12 @@ public partial class MainWindow : Window
         {
             Show();
         }
+        ShowInTaskbar = !IsPreLoginLocked();
         WindowState = WindowState.Maximized;
         Topmost = IsPreLoginLocked();
         Activate();
         Focus();
+        _power.ForceForeground(this);
     }
 
     private void EnforcePreLoginGuard()
@@ -590,7 +699,23 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_setupModeActive)
+        {
+            ShowMainWindow();
+            return;
+        }
+
         HideMiniBar();
+        HardeningStatusText.Visibility = Visibility.Visible;
+
+        if (!_preLoginGuardStateLogged)
+        {
+            _logger.Info("Pre-login guard active",
+                ("taskManagerGuard", _config.EnableTaskManagerGuard),
+                ("keepShellHiddenDuringSession", _config.KeepShellHiddenDuringSession),
+                ("blockedProcesses", string.Join(",", _config.BlockedProcessNames)));
+            _preLoginGuardStateLogged = true;
+        }
 
         if (!IsVisible)
         {
@@ -605,6 +730,16 @@ public partial class MainWindow : Window
         if (!Topmost)
         {
             Topmost = true;
+        }
+
+        if (!_power.IsForegroundProcessCurrent())
+        {
+            _logger.Warn("Foreground moved away during pre-login; reclaiming focus");
+            Dispatcher.BeginInvoke(() =>
+            {
+                ShowMainWindow();
+                _power.ForceForeground(this);
+            }, DispatcherPriority.ApplicationIdle);
         }
     }
 
@@ -636,7 +771,104 @@ public partial class MainWindow : Window
             return;
         }
 
-        Dispatcher.BeginInvoke(ShowMainWindow, DispatcherPriority.ApplicationIdle);
+        Dispatcher.BeginInvoke(() =>
+        {
+            ShowMainWindow();
+            _power.ForceForeground(this);
+        }, DispatcherPriority.ApplicationIdle);
+    }
+
+    private async void SaveSetupButton_Click(object sender, RoutedEventArgs e)
+    {
+        ErrorText.Text = string.Empty;
+        SetSetupConnectionResult("Menyimpan konfigurasi...", true, true);
+        SaveSetupButton.IsEnabled = false;
+        RetryConnectionButton.IsEnabled = false;
+        UseDefaultSetupButton.IsEnabled = false;
+
+        try
+        {
+            _config = _config.WithConnection(ServerUrlBox.Text, ComputerCodeBox.Text);
+            _api.UpdateConfig(_config);
+            await _config.SaveAsync();
+            SyncConfigDisplay();
+            EvaluateSetupState();
+
+            if (_setupModeActive)
+            {
+                _lastSetupStatusMessage = "Konfigurasi belum lengkap/valid. Cek lagi server URL dan kode komputer.";
+                ErrorText.Text = _lastSetupStatusMessage;
+                SetSetupConnectionResult(_lastSetupStatusMessage, false, true);
+                return;
+            }
+
+            MessageText.Text = "Konfigurasi tersimpan. Mencoba konek ke server...";
+            await HeartbeatAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorText.Text = ex.Message;
+        }
+        finally
+        {
+            SaveSetupButton.IsEnabled = true;
+            RetryConnectionButton.IsEnabled = true;
+            UseDefaultSetupButton.IsEnabled = true;
+        }
+    }
+
+    private async void RetryConnectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        ErrorText.Text = string.Empty;
+        SetSetupConnectionResult("Menguji koneksi ke server...", true, true);
+        _config = _config.WithConnection(ServerUrlBox.Text, ComputerCodeBox.Text);
+        SyncConfigDisplay();
+        EvaluateSetupState();
+        if (_setupModeActive || !_setupState.CanTryConnection)
+        {
+            MessageText.Text = "Lengkapi setup dulu sebelum tes koneksi.";
+            return;
+        }
+
+        RetryConnectionButton.IsEnabled = false;
+        SaveSetupButton.IsEnabled = false;
+        UseDefaultSetupButton.IsEnabled = false;
+        try
+        {
+            _api.UpdateConfig(_config);
+            MessageText.Text = "Mencoba konek ke server...";
+            await HeartbeatAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorText.Text = ex.Message;
+        }
+        finally
+        {
+            RetryConnectionButton.IsEnabled = true;
+            SaveSetupButton.IsEnabled = true;
+            UseDefaultSetupButton.IsEnabled = true;
+        }
+    }
+
+    private void UseDefaultSetupButton_Click(object sender, RoutedEventArgs e)
+    {
+        ErrorText.Text = string.Empty;
+        _config = _config.WithConnection("http://localhost:3478", "PC-01");
+        SyncConfigDisplay();
+        _lastSetupStatusMessage = "Konfigurasi dikembalikan ke default. Isi ulang sesuai IP server dan kode komputer yang benar.";
+        EvaluateSetupState();
+        SetSetupConnectionResult(_lastSetupStatusMessage, false, true);
+    }
+
+    private void SetSetupConnectionResult(string message, bool success, bool visible)
+    {
+        if (SetupConnectionResultText is null) return;
+        SetupConnectionResultText.Text = message;
+        SetupConnectionResultText.Foreground = success
+            ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1f, 0x4b, 0x38))
+            : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xb4, 0x23, 0x18));
+        SetupConnectionResultText.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -746,6 +978,7 @@ public partial class MainWindow : Window
     {
         if (!OperatingSystem.IsWindows() || !IsLoaded || _adminExitUnlocked) return;
         _power.SetShellVisibility(false);
+        _power.SetCursorVisibility(false);
         if (PresentationSource.FromVisual(this) is HwndSource source)
         {
             _power.SetWindowTopmost(source.Handle, true);
@@ -753,15 +986,47 @@ public partial class MainWindow : Window
         Topmost = true;
     }
 
-    private void RestorePostLoginShell()
+    private void RestorePostLoginShell(bool forceShowShell = false)
     {
         if (!OperatingSystem.IsWindows()) return;
-        _power.SetShellVisibility(true);
+
+        var shouldShowShell = forceShowShell || !_config.KeepShellHiddenDuringSession || IsPreLoginLocked() || _adminExitUnlocked;
+        _power.SetShellVisibility(shouldShowShell);
+        _power.SetCursorVisibility(true);
         if (PresentationSource.FromVisual(this) is HwndSource source)
         {
             _power.SetWindowTopmost(source.Handle, false);
         }
         Topmost = false;
+    }
+
+    private void EnforceBlockedProcesses()
+    {
+        if (!IsPreLoginLocked() || !_config.EnableTaskManagerGuard)
+        {
+            return;
+        }
+
+        _power.KillProcessByName(_config.BlockedProcessNames);
+    }
+
+    private void ApplyPostLoginVisibilityPolicy()
+    {
+        if (_config.KeepShellHiddenDuringSession)
+        {
+            _power.SetShellVisibility(false);
+            _power.SetCursorVisibility(true);
+            if (PresentationSource.FromVisual(this) is HwndSource source)
+            {
+                _power.SetWindowTopmost(source.Handle, false);
+            }
+            Topmost = false;
+            _logger.Info("Session visibility policy applied", ("shellHidden", true));
+            return;
+        }
+
+        RestorePostLoginShell();
+        _logger.Info("Session visibility policy applied", ("shellHidden", false));
     }
 
     private static string NormalizeAction(string? action)

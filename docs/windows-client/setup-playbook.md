@@ -46,6 +46,41 @@ Setelah setup selesai:
 - [ ] batasi tool sistem yang tidak perlu
 - [ ] verifikasi crash log & auto-relaunch saat pre-login
 - [ ] uji sign out / restart / session expire
+- [ ] jalankan checklist policy Windows pilot
+- [ ] isi hasil bypass test matrix per PC
+
+---
+
+## Checklist Policy Windows Pilot
+
+Checklist ini fokus ke hal-hal yang paling worth-it untuk pilot awal. Nama policy bisa sedikit beda tergantung edisi Windows, jadi anggap ini target kontrol, bukan nama menu yang harus 100% sama.
+
+### Prioritas wajib
+
+- [ ] **Remove Task Manager** untuk akun/public flow
+- [ ] blok akses ke **Command Prompt**
+- [ ] blok akses ke **PowerShell** kalau tidak dibutuhkan
+- [ ] blok akses ke **Registry Editor**
+- [ ] sembunyikan / batasi **Control Panel** dan **Settings**
+- [ ] batasi **Run dialog**
+- [ ] batasi **switch user / sign out path** semampunya
+- [ ] pastikan akun `PerpusClient` tetap **standard user**
+
+### Prioritas bagus kalau sempat
+
+- [ ] sembunyikan drive tertentu dari Explorer
+- [ ] batasi akses ke File Explorer area sensitif
+- [ ] matikan shortcut atau entry point yang membuka shell sistem
+- [ ] evaluasi Assigned Access / kiosk policy
+- [ ] verifikasi hanya akun operasional yang terlihat jelas di flow publik
+
+### Verifikasi setelah policy diterapkan
+
+- [ ] `Ctrl+Shift+Esc` tidak membuka Task Manager untuk user publik
+- [ ] `Win+R` tidak memberi jalan praktis ke shell
+- [ ] `cmd` / `powershell` tidak bisa dibuka normal
+- [ ] Settings/Control Panel tidak bisa dipakai keluar dari flow publik
+- [ ] sign out / switch user tidak memberi jalur gampang ke akun admin
 
 ---
 
@@ -173,7 +208,7 @@ Script ini akan:
 - menulis `appsettings.json`
 - menampilkan lokasi executable dan log
 
-Kalau mau manual, edit `appsettings.json` di PC client.
+Kalau mau manual, edit `appsettings.json` di PC client. Kalau tidak, sekarang client juga punya panel setup first-run dengan simpan config, tes koneksi ulang, dan reset default untuk isi `serverUrl` dan `computerCode` dari UI.
 
 Contoh:
 
@@ -183,7 +218,12 @@ Contoh:
   "computerCode": "PC-01",
   "clientVersion": "0.1.0-windows",
   "heartbeatFallbackSeconds": 5,
-  "autoStartOnLogin": true
+  "autoStartOnLogin": true,
+  "enableTaskManagerGuard": true,
+  "blockedProcessNames": ["Taskmgr"],
+  "keepShellHiddenDuringSession": false,
+  "enableStartupShortcutFallback": true,
+  "enableExplorerRecoveryOnAdminExit": true
 }
 ```
 
@@ -191,6 +231,11 @@ Contoh:
 - `serverUrl` mengarah ke IP server LAN
 - `computerCode` sesuai data komputer di backend
 - backend bisa diakses dari PC client
+- `enableTaskManagerGuard=true` kalau mau best-effort bunuh process terlarang saat pre-login
+- `blockedProcessNames` default `Taskmgr`; bisa ditambah nanti, tapi tetap utamakan policy OS untuk blok tool sistem
+- `keepShellHiddenDuringSession=true` hanya kalau memang ingin mode lebih kiosk saat session aktif; default `false` supaya desktop tetap normal saat user sedang memakai komputer
+- `enableStartupShortcutFallback=true` kalau mau fallback ke shortcut Startup folder saat registry `Run` gagal atau diblok policy
+- `enableExplorerRecoveryOnAdminExit=true` supaya admin exit mencoba memulihkan `explorer.exe` lagi
 
 ### Tes cepat
 Buka dari browser Windows client:
@@ -258,8 +303,13 @@ Jangan mendaftarkan startup pertama kali dari akun `PerpusAdmin`, karena nanti a
 ### Fallback kalau perlu
 Kalau registry Run tidak cukup atau diblok policy:
 
-- pakai `Startup` folder
-- atau Task Scheduler saat logon user `PerpusClient`
+- app sekarang bisa best-effort bikin shortcut di `Startup` folder user jika `enableStartupShortcutFallback=true`
+- atau tetap pakai Task Scheduler saat logon user `PerpusClient` kalau lingkungan Windows menolak dua opsi sebelumnya
+
+### Verifikasi startup yang perlu dicek
+- cek apakah value registry `Run` benar-benar terpasang di akun `PerpusClient`
+- kalau registry gagal, cek apakah shortcut `.lnk` muncul di Startup folder user
+- cek log `client-YYYYMMDD.log` untuk status startup registration/fallback
 
 ### Hasil yang diinginkan
 Setelah restart PC:
@@ -354,6 +404,21 @@ Solusi penuh untuk area ini biasanya butuh policy Windows tambahan atau Assigned
 
 Tes minimal yang harus dijalankan:
 
+### Bypass Test Matrix (isi per PC client)
+
+Gunakan tabel sederhana ini saat pilot supaya tiap mesin punya catatan nyata, bukan asumsi.
+
+| Test | Hasil | Catatan |
+|------|-------|---------|
+| Alt+Tab saat pre-login | Lolos / Tertahan | |
+| Tombol Windows saat pre-login | Lolos / Tertahan | |
+| Close app normal | Lolos / Tertahan | |
+| Task Manager | Lolos / Tertahan | |
+| Run dialog / shell tool | Lolos / Tertahan | |
+| Sign out / switch user | Lolos / Tertahan | |
+| Crash relaunch pre-login | Berhasil / Gagal | |
+| Session expire action | Berhasil / Gagal | |
+
 ### Test A — Boot normal
 - nyalakan PC
 - pastikan auto-login ke `PerpusClient`
@@ -374,10 +439,13 @@ Tes minimal yang harus dijalankan:
 
 ### Test E — Coba bypass
 - coba Alt+Tab
+- coba tombol Windows
 - coba close app
 - coba buka Task Manager
 - coba sign out
 - catat escape path yang masih lolos
+
+Kalau `enableTaskManagerGuard=true`, verifikasi juga bahwa `Taskmgr.exe` memang tertutup lagi saat pre-login. Ini best-effort guard, bukan pengganti policy Windows.
 
 ### Test F — Simulasi crash saat pre-login
 - pastikan client sedang di lock screen (belum ada session aktif)
